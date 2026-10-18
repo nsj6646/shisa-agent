@@ -14,7 +14,8 @@ const withBrain = (provider: string, name?: string): Config => {
 
 test("userLine: 이름이 있으면 그 이름, 없으면 설정 안내", () => {
   assert.match(userLine(withBrain("gemini", "채영")), /^- 사용자 이름: 채영 /);
-  assert.match(userLine({ user: { aliases: [] } } as unknown as Config), /아직 정하지 않음/);
+  // git: {} — 이 PC 의 전역 git user.name(gitGlobalIdentity)에 흔들리지 않게
+  assert.match(userLine({ user: { aliases: [] } } as unknown as Config, { git: {} }), /아직 정하지 않음/);
 });
 
 test("도구 없는 뇌(gemini): 채팅·브리핑 프롬프트에 사용자 이름", () => {

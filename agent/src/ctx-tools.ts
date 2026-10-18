@@ -5,7 +5,7 @@
 // cfg.contextMode = "inline" 이면 예전처럼 큰 맥락 블록(brain.ts buildContext)을 프롬프트에 붙이고 이 서버는 안 붙는다(되돌리기).
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { displayUserName, type Config } from "./config.ts";
+import { displayUserName, type Config, type GitIdentity } from "./config.ts";
 import type { Store, Todo, Thread, Node } from "./store.ts";
 import { CTX_SERVER, CTX_TOOL_NAMES } from "./guard.ts";
 import { profileContext } from "./profile.ts";
@@ -52,10 +52,10 @@ export const CTX_POINTER = "- 업무 맥락(할 일·지식그래프·최근 작
 // 매 턴 붙는 작은 머리말: 지금 시각(KST), 사용자, 이 대화(스레드·할 일). 집어 든 할 일의 자세한 블록은 chat.ts focusBlock
 // guidelines: 사용자가 정한 행동 지침 블록(guidelines.ts guidelinesBlock) — 상한(HEADER_MAX)과 따로, 늘 끝에 붙는다
 // 「- 사용자: 이름 (GitHub·Slack)」 한 줄. 도구 쓰는 뇌의 머리말과 도구 없는 뇌(Gemini·OpenAI 등)의 큰 맥락 블록이 같이 쓴다
-export function userLine(cfg: Pick<Config, "slackUserId" | "gitAuthor"> & { user?: Config["user"] }): string {
+export function userLine(cfg: Pick<Config, "slackUserId" | "gitAuthor"> & { user?: Config["user"] }, opts: { env?: NodeJS.ProcessEnv; git?: GitIdentity } = {}): string {
   const who = [cfg.gitAuthor?.name ? `GitHub ${cfg.gitAuthor.name}` : "", cfg.slackUserId ? `Slack ${cfg.slackUserId}` : ""].filter(Boolean).join(", ");
   // 「사용자: 이름 (GitHub cy-agent)」 꼴은 Gemini 가 계정 아이디로 읽고 「아직 학습된 사실 없음」(프로필)을 믿어 이름을 모른다고 했다 → 뜻을 못 박는다
-  const name = displayUserName(cfg.user);
+  const name = displayUserName(cfg.user, opts.env, opts.git);
   const nameLine = name
     ? `- 사용자 이름: ${name} (사용자가 설정에서 직접 정한 이름이다. 이름을 물으면 이 이름으로 답하고, 사용자를 이렇게 부른다)`
     : "- 사용자 이름: (아직 정하지 않음 — 설정의 이름 칸에서 정할 수 있다)";
