@@ -2,7 +2,7 @@
 // 값 모양: '' = 기본(설정의 뇌·모델) · 'provider|' = 그 뇌의 기본 모델 · 'provider|model' · 'provider|*' = 직접 입력
 // 고른 것은 그 대화(스레드)에 기억된다(데몬 chat_threads.pick). 화면 글은 해요체.
 
-export const PICK_PROVIDERS = ['claude-code', 'codex', 'anthropic', 'gemini', 'openai', 'genspark'];
+export const PICK_PROVIDERS = ['claude-code', 'codex', 'anthropic', 'gemini', 'openai', 'genspark', 'openrouter'];
 const MODEL_RE = /^[A-Za-z0-9._:/-]{1,100}$/;
 export const okPickModel = (m) => typeof m === 'string' && MODEL_RE.test(m);
 export const okPickProvider = (p) => PICK_PROVIDERS.includes(p);

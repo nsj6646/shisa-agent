@@ -11,6 +11,7 @@ export const PROVIDER_TITLE = {
   claude: 'Claude (API 키)',
   openai: 'GPT',
   genspark: 'Genspark',
+  openrouter: 'OpenRouter',
   claudecode: 'Claude Code',
   codexcli: 'Codex',
 };

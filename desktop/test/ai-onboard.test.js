@@ -8,8 +8,8 @@ import { checkLlm } from '../src/llm-check.js';
 
 const all = (steps) => JSON.stringify(steps);
 
-test('AI 공급자는 넷이고, 슬랙은 쿠키를 쓰지 않는다', () => {
-  assert.deepEqual(AI_PROVIDERS.map((p) => p.id), ['gemini', 'claude', 'openai', 'genspark']);
+test('AI 공급자는 다섯이고, 슬랙은 쿠키를 쓰지 않는다', () => {
+  assert.deepEqual(AI_PROVIDERS.map((p) => p.id), ['gemini', 'claude', 'openai', 'openrouter', 'genspark']);
   assert.equal(/xoxc/.test(DEFAULT_PERSONA), false);
   assert.match(DEFAULT_PERSONA, /스이시~사/);
   const slack = all(connectSteps('slack', 'claude'));

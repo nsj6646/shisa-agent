@@ -1,5 +1,5 @@
 // 브리핑·대화 두뇌. provider가 claude-code(기본)일 때만 Claude Agent SDK로 도구(커넥터 MCP·gh·맥락 도구)를 쓴다.
-// local·gemini·openai·codex는 브리핑·채팅 JSON만 받고 SDK를 부르지 않는다. 코드 수정 요청은 fixer.ts가 선택된 코딩 실행기로 처리한다.
+// local·gemini·openai·genspark·openrouter·codex는 브리핑·채팅 JSON만 받고 SDK를 부르지 않는다. 코드 수정 요청은 fixer.ts가 선택된 코딩 실행기로 처리한다.
 // api 모드(Slack 사용자 토큰·ICS)는 실시간 도구 없이 로컬 지식그래프·일정 캐시를 맥락으로 넣는다.
 // 정기 작업(브리핑 등)은 읽기 전용(guard.ts). 대화형(opts.interactive — 채팅·캐릭터 대화·할 일 팝오버·Slack DM 요청)은
 // 모든 도구를 쓰되 쓰기는 사용자 승인(permissions.ts: PreToolUse 훅 + canUseTool, 하드 차단 목록).
@@ -37,7 +37,7 @@ import { calendarNote, calendarStaleNote, readCalendarState } from "./calendar-s
 import { modelFits, roleModel, type ChatRole } from "./models.ts";
 import { undash } from "./format.ts";
 import { mailContext } from "./mail-sync.ts";
-import { LOCAL_ONLY, remoteJson, resolveAnthropicModel, resolveHttpModel, type ProviderDeps } from "./providers.ts";
+import { LOCAL_ONLY, OPENROUTER_DEFAULT_MODEL, remoteJson, resolveAnthropicModel, resolveHttpModel, type ProviderDeps } from "./providers.ts";
 import { GH_HINT, GH_SERVER, ghEnabled, ghMcpServer } from "./gh.ts";
 import { SUBAGENT_SDK_OPTIONS, SUBAGENT_TOOLS, subagentEnv } from "./subagents.ts";
 import { contextHeader, ctxMcpServer, CTX_GUIDE, CTX_SERVER, fmtNow, fmtTime, todoLine, userLine, type CtxDeps } from "./ctx-tools.ts";
@@ -271,7 +271,7 @@ export function mcpIsolation(allowed: readonly string[], registered: readonly st
   return { hidden: hiddenMcpRules(allowed, registered), env: claudeAi ? {} : { ENABLE_CLAUDEAI_MCP_SERVERS: "false" } };
 }
 
-// claude-code 가 아닌 뇌(local·gemini·openai·codex)에 넘기는 사실(할 일 목록 등)
+// claude-code 가 아닌 뇌(local·gemini·openai·genspark·openrouter·codex)에 넘기는 사실(할 일 목록 등)
 export type BrainFacts = { now?: Date; open?: LocalTodo[]; done?: LocalTodo[] };
 
 export function brainFacts(store: Store, now = new Date()): BrainFacts {
@@ -369,6 +369,7 @@ export function askedModel(provider: string, cfg: Pick<Config, "models">, want: 
   if (provider === "local") return "local";
   if (provider === "codex") return want || "codex";
   if (provider === "genspark") return want || "genspark";
+  if (provider === "openrouter") return want || OPENROUTER_DEFAULT_MODEL;
   if (provider === "anthropic") return resolveAnthropicModel(cfg.models?.general, want);
   if (provider === "gemini" || provider === "openai") return resolveHttpModel(provider, want ? undefined : cfg.models?.general, want);
   return want || cfg.models.general;

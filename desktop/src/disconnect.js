@@ -12,11 +12,11 @@ const CAP_LABEL = { slack: 'Slack', calendar: '캘린더', mail: '메일', issue
 export const HUB_CAP = { gcal: 'calendar', outlook: 'calendar', slack: 'slack', jira: 'issues' };
 export const hubsOf = (cap) => Object.keys(HUB_CAP).filter((id) => HUB_CAP[id] === cap);
 
-export const BRAIN_TITLE = { claudecode: 'Claude Code', codexcli: 'Codex', gemini: 'Gemini', openai: 'OpenAI(GPT)', claude: 'Claude API 키', genspark: 'Genspark' };
+export const BRAIN_TITLE = { claudecode: 'Claude Code', codexcli: 'Codex', gemini: 'Gemini', openai: 'OpenAI(GPT)', claude: 'Claude API 키', genspark: 'Genspark', openrouter: 'OpenRouter' };
 // 데몬 provider → 앱 id
 const FROM_DAEMON = Object.fromEntries(Object.entries(DAEMON_BRAIN).map(([k, v]) => [v, k]));
 // 데몬 brain.keys 이름 → 앱 id
-const KEY_OF = { gemini: 'gemini', openai: 'openai', claude: 'anthropic', genspark: 'genspark' };
+const KEY_OF = { gemini: 'gemini', openai: 'openai', claude: 'anthropic', genspark: 'genspark', openrouter: 'openrouter' };
 
 const okServer = (s) => typeof s === 'string' && /^[\w.@-]{1,64}$/.test(s);
 export const mcpRemoveCommand = (server) => (okServer(server) ? `claude mcp remove ${server}` : '');
@@ -35,7 +35,7 @@ export function disconnectBrainBody(p, daemonProvider = '', appActive = false) {
 }
 
 // 데몬이 꺼져 있을 때 앱이 config.json 에 직접 쓸 값: disconnectBrainBody 를 그대로 얹는다(다른 칸·다른 키는 그대로)
-const KEY_FIELD = { gemini: 'geminiApiKey', openai: 'openaiApiKey', anthropic: 'anthropicApiKey', genspark: 'gensparkApiKey' };
+const KEY_FIELD = { gemini: 'geminiApiKey', openai: 'openaiApiKey', anthropic: 'anthropicApiKey', genspark: 'gensparkApiKey', openrouter: 'openrouterApiKey' };
 export function withBrainBody(cfg, body) {
   const c = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg : {};
   const b = body?.brain;

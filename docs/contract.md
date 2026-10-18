@@ -60,7 +60,7 @@ type Bubble = {
 
 ```jsonc
 {
-  "brain": { "provider": "claude-code|codex|anthropic|gemini|openai|local", "label": "Claude Code",
+  "brain": { "provider": "claude-code|codex|anthropic|gemini|openai|genspark|openrouter|local", "label": "Claude Code",
              "ready": true,          // null = 아직 모름(Claude Code 로그인 확인 전)
              "local": false, "detail": "Claude Code 연결됨" },
   "chat": true,                      // 말 걸 수 있나(뇌 준비 + local 아님). null = 모름
@@ -81,7 +81,7 @@ type Bubble = {
 
 - `configError`: `config.json`이 JSON 문법 오류이거나 `{ … }` 모양이 아니면 데몬은 안전 모드로 켠다. 설치 마법사 전처럼 작업 기록·레포를 읽지 않고, 뇌는 `local`이다. 로그에도 크게 남긴다. 파일을 고친 뒤 데몬을 다시 켜면 풀린다.
 - `configNotes`: 모르는 `brain.provider`(→ `local`), 1분보다 작거나 숫자가 아닌 분 간격(`briefingIntervalMin`·`ingestIntervalMin`·`slackIngestIntervalMin`·`progressCheckMin`, `progressCheckMin`만 0 = 끔), 0이 아니면서 0.25시간보다 작은 `todayReminder.everyHours`, 숫자가 아닌 `port`(→ 47823), `repoRoots`의 상대 경로·`/` 같은 값. 위쪽 상한은 없다.
-- API 키 뇌(`openai`·`gemini`·`anthropic`)가 401·403을 받으면 `brain.ready: false`, `detail`은 「… API 키가 맞지 않아요. 키를 확인해 주세요」가 되고 SSE `status`로 알린다. 그 키로는 정기 브리핑을 쉬어서 실패 말풍선이 매번 뜨지 않는다. 키를 바꾸거나 호출이 한 번 성공하면 풀린다.
+- API 키 뇌(`openai`·`gemini`·`anthropic`·`genspark`·`openrouter`)가 401(OpenRouter는 401만)을 받으면 `brain.ready: false`, `detail`은 「… API 키가 맞지 않아요. 키를 확인해 주세요」가 되고 SSE `status`로 알린다. 그 키로는 정기 브리핑을 쉬어서 실패 말풍선이 매번 뜨지 않는다. 키를 바꾸거나 호출이 한 번 성공하면 풀린다. 402면 「키는 맞지만 크레딧이 필요해요」로 기억하고, OpenRouter의 403은 정책·권한 차단이라 키 실패로 기억하지 않는다.
 
 ### `GET /settings` · `PUT /settings`
 
@@ -89,7 +89,7 @@ type Bubble = {
 - `models{quick,general,code,light}`, `modelRoles`, `modelOptions`, `envLocked`
 - `briefing{exclude,sources}`, `phrases[]`, `autoMerge[]`
 - `todayReminder{mode,everyHours,times}`, `calendarAlert{minutesBefore[]}`, `lunchAlert`(점심시간 알림, 기본 `true`), 근무 시간 `workStart`(기본 `"09:00"`)·`lunchTime`(`"12:00"`)·`workEnd`(`"18:00"`)·`workDays`(`[1,2,3,4,5]`, 0 일~6 토)·`startAlert`·`leaveAlert`(기본 `true`)
-- `brain{provider,model,keys{gemini,openai,anthropic: boolean}}`
+- `brain{provider,model,keys{gemini,openai,anthropic,genspark,openrouter: boolean}}` — 키 값은 절대 내보내지 않는다
 - `user{name?}`, `repoRoots[]`, `configPath`
 - `onboarded`(설치 마법사를 마쳤나), `readSessions`(이 맥의 Claude Code·Codex 작업 기록을 읽나)
 - `character`(고른 캐릭터 id), `characters[{id,name}]`(고를 수 있는 캐릭터)
@@ -102,7 +102,7 @@ type Bubble = {
   "briefing": { "exclude": ["mail"] },                    // mail·calendar·slack·issues·sessions
   "phrases": { "<키>": ["줄", "…"] | null },              // null = 기본값
   "autoMerge": ["owner/name"],
-  "brain": { "provider": "gemini", "keys": { "gemini": "…" | null }, "model": "gemini-2.5-flash" | null },
+  "brain": { "provider": "gemini", "keys": { "gemini": "…" | null }, "model": "gemini-2.5-flash" | null }, // OpenRouter 는 provider "openrouter", keys.openrouter, model "openai/gpt-4.1-mini" 처럼 공급자 접두사 포함
   "user": { "name": "길동" | null },
   "repoRoots": ["/Users/me/code"],                        // 절대 경로만
   "readSessions": true,                                   // 작업 기록 읽기 켜고 끄기
@@ -301,7 +301,7 @@ type FocusView = {
 - `todoId?`: 대화 대상 할 일
 - `kind?: chat|hover`: 새 대화 종류. `hover`는 더블클릭 대화(threadId 없이 보내면 가장 최근의 보관 안 한 hover 대화에 이어 말하고, 없으면 새로 만든다)
 - `parentRunId?`, `model?`, `clientId?`
-- `provider?`: 이 말을 보낼 뇌(`claude-code|codex|anthropic|gemini|openai|genspark`, 로컬은 안 된다). 있으면 `model?`은 그 뇌의 모델 이름(`[A-Za-z0-9._:/-]` 1~100자)이고, 둘 다 그 대화에 기억된다. 그 뇌에 맞지 않는 이름(예: Codex에 `claude-…`)은 400
+- `provider?`: 이 말을 보낼 뇌(`claude-code|codex|anthropic|gemini|openai|genspark|openrouter`, 로컬은 안 된다). 있으면 `model?`은 그 뇌의 모델 이름(`[A-Za-z0-9._:/-]` 1~100자)이고, 둘 다 그 대화에 기억된다. 그 뇌에 맞지 않는 이름(예: Codex에 `claude-…`, OpenRouter에 접두사 없는 이름)은 400
 - `useDefault?: true`: 기본 뇌·모델로 보내고 그 대화의 기억도 지운다(`provider`와 함께 쓸 수 없다)
 - `provider`가 없으면 그 대화에 기억한 뇌·모델을 쓰고, 기억이 없으면 기본(설정의 뇌·모델)이다. 기본 뇌 설정 자체는 바뀌지 않는다
 - `attachments?`: `POST /chat/attachments`로 올린 id
@@ -321,6 +321,7 @@ type FocusView = {
 - Claude Code: 목록 API가 없어 알려 둔 Claude 모델과 설정에 적힌 모델
 - Codex: Codex CLI가 남긴 `~/.codex/models_cache.json`(`CODEX_HOME`이 있으면 그 아래)을 읽기만 한다. codex를 실행하지 않는다
 - Claude API·Gemini·OpenAI·Genspark: 그 키로 공식 모델 목록(GET)을 받는다. 못 받으면 기본 모델 하나와 `listError`
+- OpenRouter: 공개 모델 목록(GET `/api/v1/models`, 키 없이도 열림)에서 구조화 출력(`structured_outputs`)을 지원한다고 표시한 것만 준다. 이 목록 성공은 인증 성공이 아니다 — 키 확인은 설정 마법사·모델 탭의 확인(아주 짧은 생성 요청 한 번)이 따로 한다
 
 `defaults`는 설정 창 「세부 모델」의 그 뇌 값이다(Claude 뇌는 `models`, 그 밖의 뇌는 `brainModels[뇌]`).
 

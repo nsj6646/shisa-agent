@@ -16,11 +16,12 @@
 | OpenAI | `openai` | OpenAI 플랫폼 키(크레딧 필요) | 대화·브리핑 |
 | Claude API | `anthropic` | Anthropic 콘솔 키(크레딧 필요) | 대화·브리핑 |
 | Genspark | `genspark` | Genspark 유료 플랜 + `gsk login` 한 키 또는 붙여 넣은 `gsk-` 키 | 대화·브리핑 |
+| OpenRouter | `openrouter` | OpenRouter 키(`sk-or-…`) + 크레딧 | 대화·브리핑 |
 | 없음(AI 없이 쓰기) | `local` | 없음 | 정해진 말, 할 일, 오늘 할 일 표, 회의 알림 |
 
 코드 고치기, 워크트리, 백그라운드 에이전트, 작업 세션의 「새 작업」·「이어서 하기」, 자동 머지는 뇌를 무엇으로 골랐든 Claude Code로 돌아갑니다. Claude Code가 없으면 이 버튼들은 아예 보이지 않습니다.
 
-Gemini·OpenAI·Claude API·Genspark 뇌는 도구를 쓰지 못하고 답만 받습니다. 그래서 브리핑도 Slack(api)이나 캘린더(ICS)처럼 시사가 직접 모아 둔 자료만 가지고 합니다.
+Gemini·OpenAI·Claude API·Genspark·OpenRouter 뇌는 도구를 쓰지 못하고 답만 받습니다. 그래서 브리핑도 Slack(api)이나 캘린더(ICS)처럼 시사가 직접 모아 둔 자료만 가지고 합니다.
 
 ## Genspark
 
@@ -42,6 +43,27 @@ Genspark의 LLM 프록시(OpenAI 호환)로 Claude·GPT 등 여러 회사 모델
 
 연결 상태에 「Genspark 키는 맞지만 크레딧이 필요해요」가 보이면 키는 맞은 것입니다. 유료 플랜을 고른 뒤 다시 말을 걸면 바로 됩니다. 「Genspark 키가 맞지 않아요」가 보이면 `gsk login`을 다시 해 주세요.
 
+## OpenRouter
+
+여러 회사 모델(Claude·GPT·Gemini 등)을 OpenRouter 키 하나로 씁니다. 시사가 OpenRouter API를 직접 부르며, 코드 작업(pi) 실행기와는 별개입니다.
+
+1. [openrouter.ai](https://openrouter.ai)에 가입하고 로그인합니다.
+2. [Credits](https://openrouter.ai/settings/credits)에서 크레딧을 충전합니다. 무료 모델도 있지만, 쓰려는 모델이 무료인지는 모델 탭에서 확인하세요.
+3. [API Keys](https://openrouter.ai/settings/keys)에서 키(`sk-or-…`)를 만들어 복사합니다.
+4. 설치 마법사나 패널 [모델] 탭에서 붙여 넣고 **확인**을 누릅니다.
+
+키 확인은 공개 모델 목록 조회가 아니라 **아주 짧은 생성 요청 한 번**(`max_tokens: 1`)으로 합니다. 확인에도 아주 작은 사용료가 들 수 있습니다. 그래서 목록이 열려도 키가 맞다는 뜻은 아닙니다.
+
+모델 탭에는 목록에서 **구조화 출력(`structured_outputs`)을 지원한다고 표시된 모델만** 보입니다. 시사의 대화·브리핑은 할 일·프로젝트 변경까지 담은 JSON 구조화 출력을 쓰기 때문입니다. 모델을 직접 넣을 수도 있지만, 지원하지 않는 모델·엔드포인트를 고르면 요청이 보내는 쪽에서 막히고 「지원하지 않아요」라고 알립니다.
+
+그림·PDF 첨부는 그 모델이 입력으로 받을 때만 됩니다. 목록에는 입력 형식이 나오지 않으니, 못 받는 모델에 붙이면 OpenRouter 가 요청을 거절하고 시사는 「지원하지 않아요」라고 알립니다. 첨부를 조용히 버리지는 않습니다.
+
+모델 ID는 `openai/gpt-4.1-mini`처럼 공급자 접두사를 포함합니다. 이 이름은 모델 탭·채팅 선택·설정 창 「세부 모델」·데몬 저장을 그대로 지나갑니다. 대화·브리핑 모델과 (pi가 구현된 뒤의) 코드 작업 모델을 따로 고를 수 있습니다.
+
+오류는 이유별로 다릅니다. **401**은 키가 틀린 것, **402**는 크레딧이 모자란 것, **403**은 권한·정책 차단(키 문제가 아님), **429**는 잠깐 제한입니다. 403을 받았다고 키를 잘못된 키로 기억하지 않으며, 잠시 뒤 다시 보내면 됩니다. 응답 본문에 오류가 섞여 오는 경우(HTTP 200 안의 `error`)도 실패로 처리합니다.
+
+브리핑·대화에 필요한 글이 OpenRouter와 OpenRouter가 고른 추론 공급자에게 전송되고, API 사용료는 다른 구독과 별도로 부과됩니다.
+
 ## 파일로 직접 넣기
 
 ```json
@@ -55,6 +77,7 @@ Genspark의 LLM 프록시(OpenAI 호환)로 Claude·GPT 등 여러 회사 모델
 | `brain.openaiApiKey` | `CY_AGENT_OPENAI_API_KEY`, `OPENAI_API_KEY` |
 | `brain.anthropicApiKey` | `CY_AGENT_ANTHROPIC_API_KEY`(`ANTHROPIC_API_KEY`는 Claude Code도 쓰는 이름이라 읽지 않습니다) |
 | `brain.gensparkApiKey` | `CY_AGENT_GENSPARK_API_KEY`(둘 다 없으면 `gsk login`이 남긴 `~/.genspark-tool-cli/config.json`) |
+| `brain.openrouterApiKey` | `CY_AGENT_OPENROUTER_API_KEY`, `OPENROUTER_API_KEY` |
 | `models.general` | `CY_AGENT_MODEL_GENERAL`(대화·브리핑 모델. 비우면 뇌마다 기본 모델) |
 
 파일을 직접 고쳤다면 데몬을 다시 켜 주세요.

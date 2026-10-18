@@ -71,7 +71,7 @@ async function save(patch) {
 
 // ---- 모델 ----
 // 지금 뇌(brain.provider)에 맞는 세부 모델 칸(데몬 settings.modelSlots). Claude 뇌는 Claude 모델 목록에서(models 로 저장),
-// 그 밖의 뇌(Codex·Gemini·OpenAI·Genspark)는 그 뇌 목록(GET /chat/models — 채팅 드롭다운과 같은 출처)에서 고르고 brainModels 로 저장.
+// 그 밖의 뇌(Codex·Gemini·OpenAI·Genspark·OpenRouter)는 그 뇌 목록(GET /chat/models — 채팅 드롭다운과 같은 출처)에서 고르고 brainModels 로 저장.
 // 그 뇌에서 안 쓰는 칸은 막고 이유를 보인다. 코드 작업 칸은 대화 AI 와 따로: 코드 작업 AI(Claude Code·Codex)를 고르고 그 AI 의 모델을 고른다
 // (Claude Code → models.code, Codex → brainModels.codex.code — 패널 모델 탭도 이 칸을 가리킨다). 코드 작업 AI 가 준비됐을 때만 연다
 let brainLists = null; // GET /chat/models 의 brains(뇌 → 모델 목록)

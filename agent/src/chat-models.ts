@@ -4,6 +4,7 @@
 //   Claude Code  — 목록 API 가 없어 알려 둔 Claude 모델 + 설정에 적힌 것(직접 입력도 된다)
 //   Codex        — Codex CLI 가 남긴 목록 파일(~/.codex/models_cache.json, 읽기만 — codex 를 실행하지 않는다). 없으면 직접 입력
 //   Claude API·Gemini·OpenAI·Genspark — 그 키로 공식 모델 목록(GET), 10분 기억. 못 받으면 기본 모델 하나 + 직접 입력
+//   OpenRouter — 공개 모델 목록(GET, 키 없이도 열림)에서 구조화 출력 지원 모델만, 10분 기억. 키 확인은 별도의 짧은 생성 요청(설정 마법사·모델 탭)
 // 키는 응답·오류 글에 넣지 않는다. 키를 싣는 요청은 리다이렉트를 따라가지 않는다.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -12,8 +13,8 @@ import { join } from "node:path";
 import type { BrainProvider, Config } from "./config.ts";
 import { BRAIN_LABEL, CHAT_PROVIDERS, CLAUDE_MODELS, modelLabel, roleModel, usesClaudeModels } from "./models.ts";
 import {
-  ANTHROPIC_URL, ANTHROPIC_VERSION, GEMINI_DEFAULT_MODEL, GEMINI_URL, GENSPARK_NO_CREDIT, OPENAI_DEFAULT_MODEL,
-  AI_LIST_TIMEOUT_MS, BrainTimeoutError, timedFetch, anthropicKey, commandOnPath, geminiKey, gensparkKey, gensparkModels, keyTrouble, openaiKey, authFailText, type FetchLike,
+  ANTHROPIC_URL, ANTHROPIC_VERSION, GEMINI_DEFAULT_MODEL, GEMINI_URL, GENSPARK_NO_CREDIT, OPENAI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL,
+  AI_LIST_TIMEOUT_MS, BrainTimeoutError, timedFetch, anthropicKey, commandOnPath, geminiKey, gensparkKey, gensparkModels, keyTrouble, openaiKey, openrouterKey, openrouterModels, authFailText, type FetchLike,
 } from "./providers.ts";
 
 export type ModelRow = { id: string; label: string };
@@ -44,6 +45,7 @@ const NOTE: Record<string, string> = {
   gemini: "무료 키는 모델마다 하루 횟수가 정해져 있어요",
   openai: "OpenAI API 요금이 들어요",
   genspark: "Genspark 크레딧을 써요",
+  openrouter: "OpenRouter 크레딧을 써요 · 구조화 출력을 지원하는 모델만 보여요",
 };
 
 export const LIST_TTL_MS = 10 * 60_000;
@@ -107,7 +109,7 @@ async function listFor(provider: string, cfg: Pick<Config, "brain" | "models">, 
     if (!rows.length) throw new Error("Codex 모델 목록이 비어 있어요");
     return rows;
   }
-  const key = provider === "gemini" ? geminiKey(cfg, env) : provider === "openai" ? openaiKey(cfg, env) : provider === "anthropic" ? anthropicKey(cfg, env) : gensparkKey(cfg, env);
+  const key = provider === "gemini" ? geminiKey(cfg, env) : provider === "openai" ? openaiKey(cfg, env) : provider === "anthropic" ? anthropicKey(cfg, env) : provider === "openrouter" ? openrouterKey(cfg, env) : gensparkKey(cfg, env);
   if (!key) throw new Error("키가 없어요");
   const tag = `${provider}:${fp(key)}`;
   const now = (d.now ?? Date.now)();
@@ -118,13 +120,14 @@ async function listFor(provider: string, cfg: Pick<Config, "brain" | "models">, 
   if (provider === "gemini") rows = geminiRows(await getJson(f, `${GEMINI_URL}?pageSize=1000`, { "x-goog-api-key": key }, d.listTimeoutMs));
   else if (provider === "openai") rows = openaiRows(await getJson(f, "https://api.openai.com/v1/models", { Authorization: `Bearer ${key}` }, d.listTimeoutMs));
   else if (provider === "anthropic") rows = anthropicRows(await getJson(f, `${ANTHROPIC_URL.replace(/\/messages$/, "/models")}?limit=100`, { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION }, d.listTimeoutMs));
+  else if (provider === "openrouter") rows = await openrouterModels({ fetch: f, ...(d.listTimeoutMs ? { timeoutMs: d.listTimeoutMs } : {}) }); // 공개 목록(키 없이도 열린다) — 인증 확인은 따로
   else rows = (await gensparkModels(key, { fetch: f, fresh, ...(d.listTimeoutMs ? { timeoutMs: d.listTimeoutMs } : {}) })).map((id) => ({ id, label: "" }));
   if (!rows.length) throw new Error("목록이 비어 있어요");
   cache.set(tag, { rows, at: now });
   return rows;
 }
 
-const FALLBACK: Record<string, string[]> = { anthropic: CLAUDE_MODELS, gemini: [GEMINI_DEFAULT_MODEL], openai: [OPENAI_DEFAULT_MODEL], genspark: [], codex: [] };
+const FALLBACK: Record<string, string[]> = { anthropic: CLAUDE_MODELS, gemini: [GEMINI_DEFAULT_MODEL], openai: [OPENAI_DEFAULT_MODEL], openrouter: [OPENROUTER_DEFAULT_MODEL], genspark: [], codex: [] };
 
 // 준비됐나: 키 뇌는 키(틀렸다고 들은 키는 아님), Codex 는 codex 명령, Claude Code 는 로그인 흔적(~/.claude) 또는 claude 명령
 export function brainReady(provider: string, cfg: Pick<Config, "brain">, d: ChatModelsDeps = {}): { ready: boolean; why?: string } {
@@ -137,7 +140,7 @@ export function brainReady(provider: string, cfg: Pick<Config, "brain">, d: Chat
   if (provider === "codex") return has("codex") ? { ready: true } : { ready: false, why: "Codex CLI 가 없어요" };
   // Genspark: gsk login 파일만 있고 고른 적이 없으면 연결된 것으로 보지 않는다(설정 창 연결 상태와 같은 규칙) — 그 키로 목록도 받지 않는다
   const gsk = provider === "genspark" && cfg.brain?.provider !== "genspark" ? (env.CY_AGENT_GENSPARK_API_KEY?.trim() || cfg.brain?.gensparkApiKey?.trim()) : undefined;
-  const key = provider === "gemini" ? geminiKey(cfg, env) : provider === "openai" ? openaiKey(cfg, env) : provider === "anthropic" ? anthropicKey(cfg, env) : provider === "genspark" ? (cfg.brain?.provider === "genspark" ? gensparkKey(cfg, env) : gsk) : undefined;
+  const key = provider === "gemini" ? geminiKey(cfg, env) : provider === "openai" ? openaiKey(cfg, env) : provider === "anthropic" ? anthropicKey(cfg, env) : provider === "openrouter" ? openrouterKey(cfg, env) : provider === "genspark" ? (cfg.brain?.provider === "genspark" ? gensparkKey(cfg, env) : gsk) : undefined;
   if (!key) return { ready: false, why: "키가 없어요(패널 [모델] 탭에서 연결해요)" };
   const t = keyTrouble(provider, cfg, env);
   if (t === "auth") return { ready: false, why: authFailText(provider as "gemini") };
@@ -166,7 +169,7 @@ export async function chatModels(cfg: Config, deps: ChatModelsDeps & { fresh?: b
     return {
       provider, label: BRAIN_LABEL[provider], active: provider === active, ready: st.ready, ...(st.why ? { why: st.why } : {}),
       tools: provider === "claude-code", defaults: Object.fromEntries(Object.entries(defaults).filter(([, v]) => v)) as BrainModels["defaults"],
-      defaultLabel: g ? modelLabel(g) : provider === "gemini" ? GEMINI_DEFAULT_MODEL : provider === "openai" ? OPENAI_DEFAULT_MODEL : `${BRAIN_LABEL[provider]} 기본`,
+      defaultLabel: g ? modelLabel(g) : provider === "gemini" ? GEMINI_DEFAULT_MODEL : provider === "openai" ? OPENAI_DEFAULT_MODEL : provider === "openrouter" ? OPENROUTER_DEFAULT_MODEL : `${BRAIN_LABEL[provider]} 기본`,
       models, ...(listError ? { listError } : {}), custom: true, ...(NOTE[provider] ? { note: NOTE[provider] } : {}),
     };
   }));

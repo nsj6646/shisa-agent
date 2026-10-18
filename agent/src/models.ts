@@ -12,7 +12,7 @@ export const CHAT_ROLES: readonly ChatRole[] = ["quick", "general", "light"];
 export const MODEL_ID = /^[A-Za-z0-9._:/-]{1,100}$/;
 
 export const BRAIN_LABEL: Record<BrainProvider, string> = {
-  "claude-code": "Claude Code", codex: "Codex", anthropic: "Claude API", gemini: "Gemini", openai: "OpenAI", genspark: "Genspark", local: "AI 없이",
+  "claude-code": "Claude Code", codex: "Codex", anthropic: "Claude API", gemini: "Gemini", openai: "OpenAI", genspark: "Genspark", openrouter: "OpenRouter", local: "AI 없이",
 };
 // 채팅에서 고를 수 있는 뇌(로컬 뇌는 채팅에 답하지 못한다)
 export const CHAT_PROVIDERS = BRAIN_PROVIDERS.filter((p) => p !== "local") as Exclude<BrainProvider, "local">[];
@@ -39,6 +39,7 @@ export function modelFits(provider: string, id: string | undefined): boolean {
   if (provider === "gemini") return /^(gemini|gemma)-/.test(id);
   if (provider === "openai" || provider === "codex") return !claude && !/^(gemini|gemma)-/.test(id);
   if (provider === "genspark") return true; // 목록에 있는 것만 보낸다(providers.ts gensparkJson)
+  if (provider === "openrouter") return id.includes("/"); // OpenRouter 모델은 늘 공급자 접두사를 붙인다(openai/gpt-4.1-mini)
   return false;
 }
 

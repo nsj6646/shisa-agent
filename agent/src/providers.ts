@@ -1,4 +1,4 @@
-// 브리핑·채팅용 JSON만 받는 뇌. Gemini·OpenAI·Genspark는 공식 HTTP, Codex는 CLI 한 번.
+// 브리핑·채팅용 JSON만 받는 뇌. Gemini·OpenAI·Genspark·OpenRouter는 공식 HTTP, Codex는 CLI 한 번.
 // 도구·MCP·코드 수정 요청은 붙이지 않는다. 키는 로그와 오류 문장에 넣지 않는다.
 // 키가 없거나 codex가 없으면 한국어로 실패한다. local로 조용히 넘어가지 않는다.
 //
@@ -12,6 +12,7 @@ import { delimiter, join } from "node:path";
 import { findOnPath, spawnSpec } from "./plat.ts";
 import type { ContentBlock } from "./attachments.ts";
 import { DEFAULT_GENERAL_MODEL, type BrainProvider, type Config } from "./config.ts";
+import { MODEL_ID, modelFits, roleModel } from "./models.ts";
 
 // redirect: 키를 싣는 요청은 "error"(리다이렉트를 따라가 다른 곳에 키를 보내지 않는다)
 // signal: 시간 초과·멈춤(timedFetch 가 붙인다) — 가짜 fetch 도 이걸 따라 끊어야 한다
@@ -83,6 +84,7 @@ export const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
 export const MISSING_GEMINI_KEY = "Gemini API 키가 없어요. CY_AGENT_GEMINI_API_KEY, GEMINI_API_KEY, 또는 설정의 brain.geminiApiKey를 넣어 주세요.";
 export const MISSING_OPENAI_KEY = "OpenAI API 키가 없어요. CY_AGENT_OPENAI_API_KEY, OPENAI_API_KEY, 또는 설정의 brain.openaiApiKey를 넣어 주세요.";
 export const MISSING_GENSPARK_KEY = "Genspark 키가 없어요. 터미널에서 gsk login 을 하거나, 설정에서 키를 붙여 넣어 주세요(CY_AGENT_GENSPARK_API_KEY 도 돼요).";
+export const MISSING_OPENROUTER_KEY = "OpenRouter API 키가 없어요. CY_AGENT_OPENROUTER_API_KEY, OPENROUTER_API_KEY, 또는 설정의 brain.openrouterApiKey를 넣어 주세요.";
 export const MISSING_ANTHROPIC_KEY = "Claude API 키가 없어요. CY_AGENT_ANTHROPIC_API_KEY, 또는 설정의 brain.anthropicApiKey를 넣어 주세요.";
 export const MISSING_CODEX = "codex 명령을 찾을 수 없어요. Codex CLI를 설치한 뒤 다시 시도해 주세요.";
 export const LOCAL_ONLY = "로컬 뇌는 브리핑·채팅만 답해요.";
@@ -98,6 +100,11 @@ export const ANTHROPIC_VERSION = "2023-06-01";
 // 출처: 공식 CLI @genspark/cli 의 `gsk init-pi` 설정(provider genspark-llm-proxy, api openai-completions, maxTokensField max_tokens)
 export const GENSPARK_URL = "https://www.genspark.ai/api/llm_proxy/v1";
 export const GENSPARK_PRICING = "https://www.genspark.ai/pricing";
+// OpenRouter(OpenAI 호환). Authorization: Bearer sk-or-… · GET /api/v1/models(공개) · POST /api/v1/chat/completions
+// 출처: https://openrouter.ai/docs/api/reference/authentication — 대화·브리핑용이라 도구는 붙이지 않는다
+export const OPENROUTER_URL = "https://openrouter.ai/api/v1";
+// 공개 목록(2026-10)에서 구조화 출력 지원이 확인된 모델. 목록이 바뀌면 설정의 모델 탭에서 다시 고른다
+export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4.1-mini";
 
 function nonempty(v: unknown): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -141,6 +148,11 @@ export function anthropicKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv)
   return nonempty(env.CY_AGENT_ANTHROPIC_API_KEY) ?? nonempty(cfg.brain?.anthropicApiKey);
 }
 
+// 환경변수 > 설정. OPENROUTER_API_KEY 는 공식 CLI(pi 등)가 쓰는 이름이라 읽되, 파일·다른 뇌 값을 고치지 않는다
+export function openrouterKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): string | undefined {
+  return nonempty(env.CY_AGENT_OPENROUTER_API_KEY) ?? nonempty(env.OPENROUTER_API_KEY) ?? nonempty(cfg.brain?.openrouterApiKey);
+}
+
 // 뇌가 쓸 준비가 됐나(키·명령이 있나). claude-code 는 여기서 모른다(로그인은 SDK 로만 안다) → undefined
 export function brainKeyReady(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv = process.env): boolean | undefined {
   const p = cfg.brain?.provider ?? "claude-code";
@@ -148,6 +160,7 @@ export function brainKeyReady(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv
   if (p === "openai") return !!openaiKey(cfg, env);
   if (p === "anthropic") return !!anthropicKey(cfg, env);
   if (p === "genspark") return !!gensparkKey(cfg, env);
+  if (p === "openrouter") return !!openrouterKey(cfg, env);
   if (p === "codex") return commandOnPath("codex", env);
   if (p === "local") return true;
   return undefined;
@@ -189,9 +202,9 @@ export function parseModelJson(text: string, fail: string): unknown {
 
 // ---- 잘못된 키(401·403) 기억 ----
 // 키 지문(해시 앞부분)만 남긴다. 키가 바뀌면 지문이 달라져 저절로 풀린다. 성공하면 바로 지운다
-export type KeyProvider = "gemini" | "openai" | "anthropic" | "genspark";
-const KEY_PROVIDERS: readonly string[] = ["gemini", "openai", "anthropic", "genspark"];
-const KEY_LABEL: Record<KeyProvider, string> = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude", genspark: "Genspark" };
+export type KeyProvider = "gemini" | "openai" | "anthropic" | "genspark" | "openrouter";
+const KEY_PROVIDERS: readonly string[] = ["gemini", "openai", "anthropic", "genspark", "openrouter"];
+const KEY_LABEL: Record<KeyProvider, string> = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude", genspark: "Genspark", openrouter: "OpenRouter" };
 const badKeys = new Map<KeyProvider, string>();
 const noCredit = new Map<KeyProvider, string>(); // 키는 맞는데 크레딧이 없다고 답한 키(Genspark 무료 플랜)
 let onAuthChange: (() => void) | undefined;
@@ -223,13 +236,13 @@ function markCredit(p: KeyProvider, key: string) {
 function activeKey(cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv): { p: KeyProvider; key: string } | undefined {
   const p = cfg.brain?.provider;
   if (!p || !KEY_PROVIDERS.includes(p)) return undefined;
-  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : p === "genspark" ? gensparkKey(cfg, env) : anthropicKey(cfg, env);
+  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : p === "genspark" ? gensparkKey(cfg, env) : p === "openrouter" ? openrouterKey(cfg, env) : anthropicKey(cfg, env);
   return key ? { p: p as KeyProvider, key } : undefined;
 }
 // 그 뇌(지금 고른 뇌가 아니어도)의 키가 인증 오류·크레딧 없음을 받았나 — 채팅 모델 고르기에서 준비 안 된 뇌를 가린다
 export function keyTrouble(p: string, cfg: Pick<Config, "brain">, env: NodeJS.ProcessEnv = process.env): "auth" | "credit" | undefined {
   if (!KEY_PROVIDERS.includes(p)) return undefined;
-  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : p === "genspark" ? gensparkKey(cfg, env) : anthropicKey(cfg, env);
+  const key = p === "gemini" ? geminiKey(cfg, env) : p === "openai" ? openaiKey(cfg, env) : p === "genspark" ? gensparkKey(cfg, env) : p === "openrouter" ? openrouterKey(cfg, env) : anthropicKey(cfg, env);
   if (!key) return undefined;
   if (badKeys.get(p as KeyProvider) === fingerprint(key)) return "auth";
   if (noCredit.get(p as KeyProvider) === fingerprint(key)) return "credit";
@@ -248,9 +261,9 @@ export function brainCreditNeeded(cfg: Pick<Config, "brain">, env: NodeJS.Proces
 export function resetBrainAuth() { badKeys.clear(); noCredit.clear(); }
 
 // reason: 본문에서 이유 한 줄을 뽑는 함수(있으면 400 같은 실패에 덧붙인다 — 키는 넣지 않는다)
-async function readError(res: Response, fail: string, auth?: { provider: KeyProvider; key: string }, reason?: (body: string) => string | undefined): Promise<never> {
+async function readError(res: Response, fail: string, auth?: { provider: KeyProvider; key: string }, reason?: (body: string) => string | undefined, authStatuses: readonly number[] = [401, 403]): Promise<never> {
   const body = await res.text().catch(() => "");
-  if (auth && (res.status === 401 || res.status === 403)) {
+  if (auth && authStatuses.includes(res.status)) {
     markAuth(auth.provider, auth.key, true);
     throw new BrainAuthError(`${authFailText(auth.provider)} (HTTP ${res.status}).`);
   }
@@ -534,6 +547,11 @@ type ChatSpec = {
   retry?: { sleep?: (ms: number) => Promise<void> }; // 붐비면(429·500·503) GEMINI_RETRY_MS 대로 다시
   // 다시 보내도 소용없는 실패(예: OpenAI 크레딧 없음 insufficient_quota) — 그러면 쉬지 않고 바로 알린다
   noRetry?: (status: number, body: string) => boolean;
+  // 키 틀림으로 기억할 상태 코드(기본 401·403). OpenRouter 는 401 만 — 403 은 정책 차단이라 키를 영구 실패로 굳히면 안 된다
+  authStatuses?: readonly number[];
+  extraBody?: Record<string, unknown>; // 본문에 더할 것(OpenRouter provider.require_parameters)
+  onFail?: (status: number, body: string) => void; // 실패를 기억할 것이 있으면(크레딧 없음)
+  envelopeError?: (data: Record<string, unknown>) => void; // HTTP 200 안의 error 봉투 — 던지면 실패
 };
 type ChatOpts = { system?: string; blocks?: ContentBlock[]; fetch?: FetchLike; timeoutMs?: number; signal?: AbortSignal };
 // 다른 뇌가 시간 안에 답하지 않았을 때(lite 같은 넘어갈 곳이 없다)
@@ -548,6 +566,7 @@ async function chatCompletionsText(spec: ChatSpec, prompt: string, schema: unkno
     model: spec.model,
     messages,
     response_format: { type: "json_schema", json_schema: { name: "cy_brain", strict: true, schema: openaiStrict(schema) } },
+    ...spec.extraBody,
   });
   const send = async () => {
     const t0 = Date.now();
@@ -581,13 +600,16 @@ async function chatCompletionsText(spec: ChatSpec, prompt: string, schema: unkno
     }
   }
   if (!res.ok) {
-    if (spec.failText && res.status !== 401 && res.status !== 403) {
+    const authStatuses = spec.authStatuses ?? [401, 403];
+    if (spec.failText && !authStatuses.includes(res.status)) {
       const text = failBody ?? await res.text().catch(() => "");
+      spec.onFail?.(res.status, text);
       throw new Error(`${spec.failText(res.status, text) ?? `${spec.label} 요청이 실패했어요`} (HTTP ${res.status}).`);
     }
-    return readError(res, `${spec.label} 요청이 실패했어요`, { provider: spec.provider, key: spec.key });
+    return readError(res, `${spec.label} 요청이 실패했어요`, { provider: spec.provider, key: spec.key }, undefined, authStatuses);
   }
   const data = asRecord(parseModelJson(await res.text(), `${spec.label} 응답에서 JSON을 읽지 못했어요.`));
+  if (data) spec.envelopeError?.(data); // HTTP 200 인데 error 만 담아 온 경우(OpenRouter)
   const content = (data?.choices as { message?: { content?: unknown } }[] | undefined)?.[0]?.message?.content;
   return typeof content === "string"
     ? content
@@ -712,6 +734,105 @@ export async function gensparkJson(
   }
   markAuth("genspark", key, false);
   return openaiUnstrict(parseModelJson(text, "Genspark 응답에서 JSON을 읽지 못했어요."), schema);
+}
+
+// ---- OpenRouter ----
+// 공개 모델 목록(GET /api/v1/models)은 키 없이도 열린다 — 이 성공은 인증 성공이 아니라서 키 확인(llm-check)과 구분한다.
+// 채팅 후보는 목록이 structured_outputs 를 지원한다고 표시한 것만(보내는 요청의 provider.require_parameters 와 같은 기준).
+// 출처: https://openrouter.ai/docs/guides/features/structured-outputs · https://openrouter.ai/docs/guides/routing/provider-selection
+function openrouterRows(json: unknown): { id: string; label: string }[] {
+  const list = Array.isArray(asRecord(json)?.data) ? asRecord(json)!.data as unknown[] : [];
+  return list.map((m) => asRecord(m))
+    .filter((m): m is Record<string, any> => !!m && typeof m.id === "string")
+    .map((m) => ({ id: String(m.id).trim(), name: m.name, supported: Array.isArray(m.supported_parameters) ? (m.supported_parameters as unknown[]).map(String) : [], out: asRecord(m.architecture)?.output_modalities }))
+    .filter((m) => MODEL_ID.test(m.id) && m.id.includes("/") && m.supported.includes("structured_outputs"))
+    .filter((m) => !Array.isArray(m.out) || (m.out as unknown[]).map(String).includes("text"))
+    .map((m) => ({ id: m.id, label: typeof m.name === "string" ? m.name : "" }))
+    .sort((a, b) => a.id.localeCompare(b.id, "en"));
+}
+
+export async function openrouterModels(opts: { fetch?: FetchLike; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ id: string; label: string }[]> {
+  const fetchImpl = opts.fetch ?? fetch;
+  let res: Response;
+  const t0 = Date.now();
+  try {
+    res = await timedFetch(fetchImpl, `${OPENROUTER_URL}/models`, { method: "GET", redirect: "error" }, opts.timeoutMs ?? AI_LIST_TIMEOUT_MS, opts.signal);
+  } catch (e) {
+    if (e instanceof BrainTimeoutError) {
+      console.warn(`[openrouter] 시간 초과 (모델 목록) ${Date.now() - t0}ms`);
+      throw new BrainTimeoutError("OpenRouter 모델 목록이 너무 오래 걸려 멈췄어요. 잠시 뒤 다시 보내 주세요");
+    }
+    if (opts.signal?.aborted) throw new Error(STOPPED_MSG);
+    throw new Error("OpenRouter 모델 목록을 받지 못했어요. 인터넷 연결을 확인해 주세요.");
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`${openrouterFailText(res.status, body) ?? "OpenRouter 모델 목록을 받지 못했어요"} (HTTP ${res.status}).`);
+  }
+  const rows = openrouterRows(tryParse(await res.text()));
+  if (!rows.length) throw new Error("OpenRouter 목록에 구조화 출력을 지원하는 모델이 없어요. 잠시 뒤 다시 해 주세요.");
+  return rows;
+}
+
+export const OPENROUTER_NO_CREDIT = "OpenRouter 키는 맞지만 크레딧이 필요해요. 결제를 켜고 크레딧을 충전한 뒤 다시 보내 주세요: https://openrouter.ai/settings/credits";
+export const OPENROUTER_POLICY = "OpenRouter 가 이 요청을 권한·정책으로 막았어요(키가 틀렸다는 뜻이 아니에요). OpenRouter 계정의 데이터 정책·모델 접근 권한을 확인해 주세요";
+export const OPENROUTER_UNSUPPORTED = "고른 모델·엔드포인트가 이 요청을 지원하지 않아요(구조화 출력·그림/PDF 첨부 등). 모델 탭에서 지원하는 모델을 골라 주세요";
+
+// 본문 {"error":{"code","message"}} 의 코드·이유(키 모양 글자는 가린다)
+function openrouterError(body: string): { status: number; message?: string } {
+  const e = asRecord(asRecord(tryParse(body))?.error);
+  const status = Number(e?.code ?? e?.status) || 0;
+  const message = typeof e?.message === "string" ? e.message.replace(/sk-or-[\w-]+/g, "…").replace(/\s+/g, " ").trim().slice(0, 200) : undefined;
+  return { status, ...(message ? { message } : {}) };
+}
+
+function openrouterFailText(status: number, body: string): string | undefined {
+  const e = openrouterError(body);
+  const code = status || e.status;
+  if (code === 402) return OPENROUTER_NO_CREDIT;
+  if (code === 403) return OPENROUTER_POLICY;
+  if (code === 404 || /no endpoints found|support the provided parameters|not support/i.test(e.message ?? "")) return OPENROUTER_UNSUPPORTED;
+  if (code === 429) return "OpenRouter 사용량 한도에 걸렸어요. 잠시 뒤 다시 보내 주세요";
+  if (code >= 500) return "OpenRouter 추론 공급자가 지금 답하지 못했어요. 잠시 뒤 다시 보내 주세요";
+  if (code === 400 && e.message) return `OpenRouter 가 요청을 받지 않았어요: ${e.message}`;
+  return undefined;
+}
+
+// HTTP 200 인데 error 만 담아 온 경우(OpenRouter 비스트리밍). 401 은 키 실패로 기억하지만 403 은 기억하지 않는다
+function openrouterEnvelope(data: Record<string, unknown>, key: string): void {
+  const e = asRecord(data.error);
+  if (!e) return;
+  const body = JSON.stringify({ error: e });
+  const { status, message } = openrouterError(body); // 이유·키 가리기를 한 곳에서
+  if (status === 401) { markAuth("openrouter", key, true); throw new BrainAuthError(`${authFailText("openrouter")} (HTTP 200 안의 오류).`); }
+  if (status === 402) { markCredit("openrouter", key); throw new BrainCreditError(OPENROUTER_NO_CREDIT); }
+  const why = openrouterFailText(status, body);
+  throw new Error(`${why ?? `OpenRouter 응답 오류: ${message ?? "OpenRouter 응답에 error 가 들어 있어요"}`} (HTTP 200).`);
+}
+
+// 대화·브리핑 한 번. 키는 헤더에만, 모델 ID(공급자/모델)는 그대로 보낸다. 403 정책 차단은 키 실패로 굳히지 않는다
+export async function openrouterJson(
+  cfg: Pick<Config, "brain" | "models" | "brainModels">, prompt: string, schema: unknown,
+  opts: { system?: string; model?: string; blocks?: ContentBlock[]; fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; env?: NodeJS.ProcessEnv; timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<unknown> {
+  const env = opts.env ?? process.env;
+  const key = openrouterKey(cfg, env);
+  if (!key) throw new Error(MISSING_OPENROUTER_KEY);
+  // 고른 모델(세부 모델/모델 탭) > 그 뇌의 설정값(이름표를 갖출 때만) > 기본 하나
+  const asked = (opts.model ?? "").trim();
+  const model = asked && modelFits("openrouter", asked) ? asked : roleModel(cfg, "general", "openrouter") ?? OPENROUTER_DEFAULT_MODEL;
+  const text = await chatCompletionsText({
+    url: `${OPENROUTER_URL}/chat/completions`, label: "OpenRouter", provider: "openrouter", key, model,
+    failText: openrouterFailText, retry: { sleep: opts.sleep }, // 429·5xx 만 제한적으로 다시(402·403·400 은 BUSY 가 아니라 다시 보내지 않는다)
+    authStatuses: [401], // 403(정책)을 영구 인증 실패로 기억하지 않는다
+    extraBody: { provider: { require_parameters: true } }, // 구조화 출력을 지원하는 엔드포인트로만 라우팅
+    onFail: (status, body) => {
+      if (status === 402 || openrouterError(body).status === 402) { markCredit("openrouter", key); throw new BrainCreditError(OPENROUTER_NO_CREDIT); }
+    },
+    envelopeError: (data) => openrouterEnvelope(data, key),
+  }, prompt, schema, opts);
+  markAuth("openrouter", key, false);
+  return openaiUnstrict(parseModelJson(text, "OpenRouter 응답에서 JSON을 읽지 못했어요."), schema);
 }
 
 export async function anthropicJson(
@@ -872,13 +993,14 @@ export async function codexJson(prompt: string, schema: unknown, opts: CodexOpts
 }
 
 export async function remoteJson(
-  provider: Extract<BrainProvider, "gemini" | "openai" | "anthropic" | "genspark" | "codex">,
-  cfg: Pick<Config, "brain" | "models">, prompt: string, schema: unknown,
+  provider: Extract<BrainProvider, "gemini" | "openai" | "anthropic" | "genspark" | "openrouter" | "codex">,
+  cfg: Pick<Config, "brain" | "models" | "brainModels">, prompt: string, schema: unknown,
   opts: { system?: string; model?: string; blocks?: ContentBlock[] } & ProviderDeps = {},
 ): Promise<unknown> {
   if (provider === "gemini") return geminiJson(cfg, prompt, schema, opts);
   if (provider === "openai") return openaiJson(cfg, prompt, schema, opts);
   if (provider === "anthropic") return anthropicJson(cfg, prompt, schema, opts);
   if (provider === "genspark") return gensparkJson(cfg, prompt, schema, opts);
+  if (provider === "openrouter") return openrouterJson(cfg, prompt, schema, opts);
   return codexJson(prompt, schema, opts);
 }

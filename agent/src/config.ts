@@ -36,7 +36,7 @@ export type Config = {
   // 모델은 여기 두지 않는다: Claude Code 면 models.code, Codex 면 brainModels.codex.code(설정 창 「세부 모델」의 코드 작업 칸)
   coding?: { provider: CodingProvider };
   models: { code: string; general: string; light: string; quick?: string };
-  // Claude 가 아닌 뇌(Codex·Gemini·OpenAI·Genspark)의 세부 모델: 뇌 → 역할(general·quick·light) → 모델 이름.
+  // Claude 가 아닌 뇌(Codex·Gemini·OpenAI·Genspark·OpenRouter)의 세부 모델: 뇌 → 역할(general·quick·light) → 모델 이름.
   // 설정 창 「세부 모델」이 지금 뇌의 칸만 고친다(다른 뇌 값은 그대로). 없으면 그 뇌의 기본(models.ts roleModel)
   // code 는 Codex 만(Codex 로 코드 작업할 때 모델). Claude Code 의 코드 작업 모델은 models.code
   brainModels?: Partial<Record<BrainProvider, Partial<Record<"general" | "quick" | "light" | "code", string>>>>;
@@ -95,7 +95,7 @@ export type Config = {
   configNotes?: string[];
 };
 
-export const BRAIN_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "genspark", "local"] as const;
+export const BRAIN_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "genspark", "openrouter", "local"] as const;
 export type BrainProvider = (typeof BRAIN_PROVIDERS)[number];
 export type BrainConfig = {
   provider: BrainProvider;
@@ -104,6 +104,8 @@ export type BrainConfig = {
   anthropicApiKey?: string; // Claude API 키(Claude Code 없이 Claude 와 이야기 — providers.ts anthropicJson)
   // Genspark 키(gsk-…). 없으면 gsk login 이 남긴 ~/.genspark-tool-cli/config.json 을 쓸 때마다 읽는다(providers.ts gensparkKey)
   gensparkApiKey?: string;
+  // OpenRouter 키(sk-or-…). 대화·브리핑 전용 뇌(providers.ts openrouterJson)
+  openrouterApiKey?: string;
 };
 
 export const DEFAULT_GENERAL_MODEL = "claude-sonnet-5-5";
@@ -122,7 +124,7 @@ function safeLabel(raw: string): string {
 
 // notes: 모르는 provider 면 여기에 한 줄(GET /status configNotes). 데몬은 죽지 않고 local 로 뜬다
 export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>, notes: string[] = []): BrainConfig {
-  const rawBrain = (file.brain && typeof file.brain === "object" ? file.brain : {}) as { provider?: unknown; geminiApiKey?: unknown; openaiApiKey?: unknown; anthropicApiKey?: unknown; gensparkApiKey?: unknown };
+  const rawBrain = (file.brain && typeof file.brain === "object" ? file.brain : {}) as { provider?: unknown; geminiApiKey?: unknown; openaiApiKey?: unknown; anthropicApiKey?: unknown; gensparkApiKey?: unknown; openrouterApiKey?: unknown };
   // 새 설치(onboarded 키가 있음)는 마법사에서 고르기 전까지 "아직 안 고름" = local(모델 없음). 예전 설정은 claude-code
   let providerRaw = nonempty(env.CY_AGENT_BRAIN) ?? nonempty(rawBrain.provider) ?? (isNewStyle(file) ? "local" : "claude-code");
   if (!(BRAIN_PROVIDERS as readonly string[]).includes(providerRaw)) {
@@ -137,12 +139,14 @@ export function pickBrain(env: NodeJS.ProcessEnv, file: Record<string, unknown>,
   // ANTHROPIC_API_KEY 는 Claude Code 도 쓰는 이름이라 일부러 안 읽는다(뇌를 anthropic 으로 고른 사람만 키를 넣는다)
   const anthropicApiKey = nonempty(env.CY_AGENT_ANTHROPIC_API_KEY) ?? nonempty(rawBrain.anthropicApiKey);
   const gensparkApiKey = nonempty(env.CY_AGENT_GENSPARK_API_KEY) ?? nonempty(rawBrain.gensparkApiKey);
+  const openrouterApiKey = nonempty(env.CY_AGENT_OPENROUTER_API_KEY) ?? nonempty(env.OPENROUTER_API_KEY) ?? nonempty(rawBrain.openrouterApiKey);
   return {
     provider: providerRaw as BrainProvider,
     ...(geminiApiKey ? { geminiApiKey } : {}),
     ...(openaiApiKey ? { openaiApiKey } : {}),
     ...(anthropicApiKey ? { anthropicApiKey } : {}),
     ...(gensparkApiKey ? { gensparkApiKey } : {}),
+    ...(openrouterApiKey ? { openrouterApiKey } : {}),
   };
 }
 

@@ -3,7 +3,7 @@
 import { sanitizeCanned } from './canned.js';
 import { isStockPersona } from './persona.js';
 
-export const KEY_PROVIDERS = ['gemini', 'claude', 'openai', 'genspark'];
+export const KEY_PROVIDERS = ['gemini', 'claude', 'openai', 'genspark', 'openrouter'];
 export const CLI_PROVIDERS = ['claudecode', 'codexcli'];
 export const ALL_PROVIDERS = [...KEY_PROVIDERS, ...CLI_PROVIDERS];
 
@@ -148,8 +148,8 @@ export function withVoice(data, { persona, canned } = {}) {
 
 // 고른 AI → 시사 데몬 설정(~/.cy-agent/config.json)의 brain·models.general 로 옮길 값.
 // 패널 채팅·캐릭터 대화·브리핑은 전부 데몬이 답한다(Claude API 키도 데몬의 anthropic 뇌로) — 'none' 은 로컬 뇌(정해진 말·간단한 답)
-export const DAEMON_BRAIN = { claudecode: 'claude-code', codexcli: 'codex', gemini: 'gemini', openai: 'openai', claude: 'anthropic', genspark: 'genspark', none: 'local' };
-const KEY_FIELD = { gemini: 'geminiApiKey', openai: 'openaiApiKey', claude: 'anthropicApiKey', genspark: 'gensparkApiKey' };
+export const DAEMON_BRAIN = { claudecode: 'claude-code', codexcli: 'codex', gemini: 'gemini', openai: 'openai', claude: 'anthropic', genspark: 'genspark', openrouter: 'openrouter', none: 'local' };
+const KEY_FIELD = { gemini: 'geminiApiKey', openai: 'openaiApiKey', claude: 'anthropicApiKey', genspark: 'gensparkApiKey', openrouter: 'openrouterApiKey' };
 export function daemonBrainPatch(data) {
   const d = normalizeSisa(data);
   const chosen = d.provider === 'none' ? 'none' : activeProvider(d);
@@ -173,6 +173,7 @@ export function settingsBrainBody(patch) {
   if (patch.brain.openaiApiKey) keys.openai = patch.brain.openaiApiKey;
   if (patch.brain.anthropicApiKey) keys.anthropic = patch.brain.anthropicApiKey;
   if (patch.brain.gensparkApiKey !== undefined) keys.genspark = patch.brain.gensparkApiKey || null;
+  if (patch.brain.openrouterApiKey !== undefined) keys.openrouter = patch.brain.openrouterApiKey || null;
   if (Object.keys(keys).length) b.keys = keys;
   if (patch.general !== undefined) b.model = patch.general || null;
   return { brain: b };

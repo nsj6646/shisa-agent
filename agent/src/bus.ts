@@ -175,7 +175,7 @@ export type RunsApi = Pick<RunRegistry, "listRuns" | "getRun" | "sendMessage" | 
 // 채팅 요청의 뇌·모델 고르기: provider(아는 뇌, 로컬 빼고)가 있으면 model 은 그 뇌의 모델 이름(모양만 본다) — 이번 말에 쓰고 그 대화에 기억.
 // provider 가 없으면 model 은 예전처럼 작업 세션 창 모델(GET /models 목록 안, bodyModel) — 이때 pick 은 undefined(그 대화에 기억한 것).
 // useDefault: true 면 null(기본으로 — 기억도 지운다). 그 뇌에 맞는 이름인지는 Chat.send 가 본다(bad_model → 400)
-export const CHAT_PICK_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "genspark"];
+export const CHAT_PICK_PROVIDERS = ["claude-code", "codex", "anthropic", "gemini", "openai", "genspark", "openrouter"];
 const PICK_MODEL = /^[A-Za-z0-9._:/-]{1,100}$/;
 export function bodyPick(body: any): { provider?: string; model?: string } | null | undefined {
   if (body?.useDefault !== undefined && typeof body.useDefault !== "boolean") throw new BadRequest("useDefault must be boolean");

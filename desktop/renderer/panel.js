@@ -544,7 +544,7 @@ function watchAgentLogin() {
 
 function keyFail(error) {
   const e = String(error || '');
-  if (/^(Genspark|그 모델은 Genspark|gsk login)/.test(e)) return e; // Genspark 는 llm-check.js 의 말 그대로(무엇을 할지 들어 있다)
+  if (/^(Genspark|그 모델은 Genspark|gsk login|OpenRouter)/.test(e)) return e; // Genspark·OpenRouter 는 llm-check.js 의 말 그대로(무엇을 할지 들어 있다)
   if (/credit|balance|billing|quota|크레딧/i.test(e) && !/RESOURCE_EXHAUSTED/.test(e)) {
     return '키는 맞을 수 있지만 **크레딧이 없습니다.** 결제 크레딧을 산 뒤 다시 **확인**을 누르세요.';
   }

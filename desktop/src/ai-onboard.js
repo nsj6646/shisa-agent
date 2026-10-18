@@ -63,6 +63,27 @@ export const AI_PROVIDERS = [
     stuck: ['크레딧이 반영되기까지 몇 분 걸릴 수 있습니다. 확인이 실패하면 조금 있다가 다시 누르세요.'],
   },
   {
+    id: 'openrouter',
+    title: 'OpenRouter',
+    blurb: '여러 회사 모델(Claude·GPT·Gemini 등)을 키 하나로 씁니다. 시사가 OpenRouter 에 직접 물어봅니다.',
+    note: '키 확인은 아주 짧은 생성 요청 한 번으로 해요. 확인에도 아주 작은 사용료가 들 수 있습니다.',
+    keyHint: 'sk-or-',
+    url: 'https://openrouter.ai/settings/keys',
+    pricing: 'https://openrouter.ai/pricing',
+    rows: [
+      { text: '브라우저에 **OpenRouter** 가 열립니다. 가입하고 로그인합니다.', link: true },
+      '**Credits** 에서 크레딧을 충전합니다. 무료 모델도 있지만, 쓰려는 모델이 무료인지 모델 탭에서 확인하세요.',
+      '**API Keys** 에서 **Create Key** 를 누르고 이름을 아무거나 적습니다.',
+      '**sk-or-** 로 시작하는 키는 **한 번만** 보입니다. 바로 **Copy** 를 누릅니다.',
+      { keys: [MOD, 'V'], text: '아래 칸에 붙이고 **확인**을 누릅니다.' },
+    ],
+    stuck: [
+      '「권한·정책으로 막았어요」가 나오면 키는 맞은 것입니다. OpenRouter 계정의 데이터 정책·모델 접근 권한을 확인하세요.',
+      '「크레딧이 필요해요」가 나오면 키는 맞은 것입니다. 충전한 뒤 다시 **확인**을 누르세요.',
+      '모델 탭에는 구조화 출력을 지원한다고 표시된 모델만 보입니다. 그래야 할 일·프로젝트 변경까지 정확히 처리돼요.',
+    ],
+  },
+  {
     id: 'genspark',
     title: 'Genspark',
     blurb: 'Genspark 의 LLM 프록시입니다. 여러 회사 모델(Claude·GPT 등)을 키 하나로 씁니다. 유료 플랜이 있어야 대답합니다.',
@@ -109,6 +130,7 @@ export const BRAIN_CHOICES = [
   { id: 'openai', title: 'OpenAI(GPT) 키', blurb: 'OpenAI 플랫폼 키를 붙여 넣어요. 크레딧이 있어야 대답해요.' },
   { id: 'claude', title: 'Claude API 키', blurb: 'Anthropic 콘솔 키를 붙여 넣어요. 크레딧이 있어야 대답해요.' },
   { id: 'genspark', title: 'Genspark', blurb: 'gsk login 한 키를 쓰거나 키를 붙여 넣어요. Claude·GPT 등 여러 모델을 고를 수 있어요. 유료 플랜이 있어야 대답해요.' },
+  { id: 'openrouter', title: 'OpenRouter 키', blurb: '여러 회사 모델(Claude·GPT·Gemini 등)을 키 하나로 써요. 브리핑·대화 모델을 모델 탭에서 골라요.' },
   { id: 'none', local: true, title: 'AI 없이 쓰기', blurb: '준비물도 결제도 필요 없어요. 할 일, 오늘 할 일 표, 캘린더(ICS) 회의 알림, 인사와 응원은 그대로 돼요. AI는 나중에 설정에서 언제든 연결할 수 있어요.' },
 ];
 // 「더 연결하기」(선택): 캘린더 ICS · Slack · 레포 폴더

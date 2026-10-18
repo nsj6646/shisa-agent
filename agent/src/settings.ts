@@ -84,8 +84,8 @@ export type SettingsView = {
   modelSlots: { provider: BrainProvider; title: string; claude: boolean; roles: { role: ModelRole; label: string; value: string | null; enabled: boolean; why?: string; coder?: CoderSlot }[] };
 };
 export type CoderSlot = { provider: CodingProvider; choices: { id: CodingProvider; label: string; ready: boolean | null; why?: string }[] };
-export type BrainKey = "gemini" | "openai" | "anthropic" | "genspark";
-const BRAIN_KEY_FIELD: Record<BrainKey, "geminiApiKey" | "openaiApiKey" | "anthropicApiKey" | "gensparkApiKey"> = { gemini: "geminiApiKey", openai: "openaiApiKey", anthropic: "anthropicApiKey", genspark: "gensparkApiKey" };
+export type BrainKey = "gemini" | "openai" | "anthropic" | "genspark" | "openrouter";
+const BRAIN_KEY_FIELD: Record<BrainKey, "geminiApiKey" | "openaiApiKey" | "anthropicApiKey" | "gensparkApiKey" | "openrouterApiKey"> = { gemini: "geminiApiKey", openai: "openaiApiKey", anthropic: "anthropicApiKey", genspark: "gensparkApiKey", openrouter: "openrouterApiKey" };
 // 뇌 바꾸기: provider · 키(null = 지우기) · model(null = 기본으로). 바로 반영(데몬 재시작 불필요)
 export type BrainPatch = { provider?: BrainProvider; keys?: Partial<Record<BrainKey, string | null>>; model?: string | null };
 export type PhraseView = { key: string; group: string; label: string; vars: string[]; default: string[]; value: string[] | null };
@@ -135,7 +135,7 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
     if (!bm || typeof bm !== "object" || Array.isArray(bm)) throw new SettingsError("brainModels must be an object");
     for (const k of Object.keys(bm)) if (k !== "provider" && k !== "models") throw new SettingsError(`unknown key: brainModels.${k}`);
     const p = bm.provider;
-    if (typeof p !== "string" || !(BRAIN_PROVIDERS as readonly string[]).includes(p) || p === "local" || usesClaudeModels(p)) throw new SettingsError("brainModels.provider must be codex|gemini|openai|genspark (Claude 뇌는 models 로)");
+    if (typeof p !== "string" || !(BRAIN_PROVIDERS as readonly string[]).includes(p) || p === "local" || usesClaudeModels(p)) throw new SettingsError("brainModels.provider must be codex|gemini|openai|genspark|openrouter (Claude 뇌는 models 로)");
     const ms = bm.models as Record<string, unknown>;
     if (!ms || typeof ms !== "object" || Array.isArray(ms)) throw new SettingsError("brainModels.models must be an object");
     const m: Partial<Record<ChatRole | "code", string | null>> = {};
@@ -432,7 +432,7 @@ export class Settings {
         provider: c.brain?.provider ?? "claude-code", model: roleModel(c, "general") ?? "",
         // genspark: 설정에 키가 있거나, Genspark 를 고른 채 gsk login 파일에 키가 있으면 true(키 값은 내보내지 않는다).
         // 고르지 않았으면 gsk login 만 해 둔 것으로 「연결됨」이 되지 않게 파일은 보지 않는다
-        keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey, genspark: !!c.brain?.gensparkApiKey || (c.brain?.provider === "genspark" && !!gskLoginKey(this.env)) },
+        keys: { gemini: !!c.brain?.geminiApiKey, openai: !!c.brain?.openaiApiKey, anthropic: !!c.brain?.anthropicApiKey, genspark: !!c.brain?.gensparkApiKey || (c.brain?.provider === "genspark" && !!gskLoginKey(this.env)), openrouter: !!c.brain?.openrouterApiKey },
       },
       character: isCharacterId(c.character) ? c.character : DEFAULT_CHARACTER,
       characters: characterOptions(),

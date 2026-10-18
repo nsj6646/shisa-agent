@@ -7,12 +7,21 @@ import path from 'node:path';
 import { findBin } from './agent-login.js';
 import { execBin } from './win-exec.js';
 
+// OpenRouter(OpenAI 호환). 공개 모델 목록(GET /models)은 키 없이도 열린다 — 확인은 아주 짧은 생성 요청 한 번으로 따로 한다.
+// 출처: https://openrouter.ai/docs/api/reference/authentication · https://openrouter.ai/docs/api/reference/errors-and-debugging
+export const OPENROUTER_URL = 'https://openrouter.ai/api/v1';
+export const OPENROUTER_DEFAULT_MODEL = 'openai/gpt-4.1-mini'; // 데몬 기본(agent/src/providers.ts)과 같게
+export const OPENROUTER_BAD_KEY = 'OpenRouter API 키가 맞지 않아요. 키를 확인해 주세요.';
+export const OPENROUTER_NO_CREDIT = 'OpenRouter 키는 맞지만 크레딧이 필요해요. 결제를 켜고 크레딧을 충전한 뒤 다시 보내 주세요: https://openrouter.ai/settings/credits';
+export const OPENROUTER_POLICY = 'OpenRouter 가 이 요청을 권한·정책으로 막았어요(키가 틀렸다는 뜻이 아니에요). OpenRouter 계정의 데이터 정책·모델 접근 권한을 확인해 주세요.';
+
 // gemini 는 모델이 자주 바뀌어(옛 모델은 새 사용자에게 막힌다) 키로 목록을 받아 가장 새 flash 를 쓴다.
 // 목록을 못 받으면 아래 값을 쓴다.
 const MODELS = {
   gemini: 'gemini-3.8-flash',
   claude: 'claude-3-5-haiku-latest',
   openai: 'gpt-4.1-mini', // 데몬 기본(agent/src/providers.ts OPENAI_DEFAULT_MODEL)과 같게
+  openrouter: OPENROUTER_DEFAULT_MODEL,
 };
 
 export const OPENAI_NO_CREDIT = '키는 맞지만 크레딧이 없습니다. 결제를 켜고 크레딧을 충전해 주세요(ChatGPT 구독과 API 요금은 따로입니다): https://platform.openai.com/settings/organization/billing';
@@ -104,6 +113,40 @@ function gensparkError(body) {
   return `Genspark 확인에 실패했어요 (HTTP ${body.status}).`;
 }
 
+// OpenRouter 상태 코드 → 확인 결과. 401 만 키 실패고, 402 잔액·403 정책·429 는 키는 맞다(연결은 하되 알린다).
+function openrouterResult(status, raw) {
+  if (status === 401) return { ok: false, error: OPENROUTER_BAD_KEY };
+  if (status === 402) return { ok: true, warn: OPENROUTER_NO_CREDIT };
+  if (status === 403) return { ok: true, warn: OPENROUTER_POLICY };
+  if (status === 429) return { ok: true, warn: 'OpenRouter 요청이 잠깐 너무 잦았어요. 연결은 됐고, 조금 뒤엔 잘 돼요.' };
+  if (/no endpoints found|support the provided parameters|not support/i.test(raw ?? '')) return { ok: false, error: 'OpenRouter 기본 모델을 쓸 수 있는 엔드포인트가 없어요(모델 접근 권한·데이터 정책 확인). 모델 탭에서 다른 모델을 골라 주세요.' };
+  if (status >= 500) return { ok: false, error: 'OpenRouter 추론 공급자가 지금 답하지 못했어요. 조금 뒤 다시 확인해 주세요.' };
+  return null;
+}
+
+// OpenRouter 키 확인: 공개 모델 목록이 아니라 아주 짧은 생성 요청 한 번(max_tokens 1)으로 본다.
+// 확인에도 아주 작은 사용료가 들 수 있다고 안내한다(ai-onboard.js note). HTTP 200 안의 error 봉투도 실패로 본다
+async function checkOpenrouter(key, fetchImpl) {
+  const res = await fetchImpl(`${OPENROUTER_URL}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model: MODELS.openrouter, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const body = await readBody(res, key);
+  if (body.ok) {
+    let code = 0;
+    let message = '';
+    try {
+      const e = JSON.parse(body.text)?.error;
+      code = Number(e?.code ?? e?.status) || 0;
+      message = typeof e?.message === 'string' ? e.message : '';
+    } catch { /* JSON 아님 — choices 만 보면 된다 */ }
+    if (!code && !message) return { ok: true };
+    return openrouterResult(code || 400, message) ?? { ok: false, error: 'OpenRouter 응답에 오류가 들어 있어요. 조금 뒤 다시 확인해 주세요.' };
+  }
+  return openrouterResult(body.status, body.raw ?? body.error) ?? { ok: false, error: body.error };
+}
+
 // OpenAI 키 확인: 목록(GET /models) → 아주 짧은 대화 한 번. 목록이 403 이면 제한 키(api.model.read 없음)일 수 있고,
 // 목록이 열려도 크레딧이 없으면 대화에서 429 insufficient_quota 가 온다(연결은 됐는데 대화만 막히던 문제)
 async function checkOpenai(key, fetchImpl) {
@@ -137,6 +180,7 @@ export async function checkLlm(provider, apiKey, rawFetch = globalThis.fetch) {
     }
     if (provider === 'openai') return await checkOpenai(key, fetchImpl);
     if (provider === 'genspark') return await checkGenspark(key, fetchImpl);
+    if (provider === 'openrouter') return await checkOpenrouter(key, fetchImpl);
     if (provider === 'claude') {
       const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -350,6 +394,14 @@ export function pickModels(provider, json) {
     // 프록시가 주는 목록 그대로(이 목록에 있는 것만 데몬이 보낸다)
     return (json?.data ?? []).map((m) => String(m?.id ?? '')).filter(Boolean).map((id) => ({ id, label: '' }));
   }
+  if (provider === 'openrouter') {
+    // 대화용 구조화 출력(structured_outputs)을 지원한다고 표시한 모델만 — 데몬의 provider.require_parameters 와 같은 기준
+    return (json?.data ?? [])
+      .filter((m) => (m?.supported_parameters ?? []).includes('structured_outputs'))
+      .map((m) => ({ id: String(m?.id ?? '').trim(), label: typeof m?.name === 'string' ? m.name : '' }))
+      .filter((m) => /^[A-Za-z0-9._:/-]{1,100}$/.test(m.id) && m.id.includes('/'))
+      .sort((a, b) => a.id.localeCompare(b.id, 'en'));
+  }
   if (provider === 'openai') {
     return (json?.data ?? [])
       .map((m) => String(m.id))
@@ -375,6 +427,8 @@ export async function listModels(provider, apiKey, rawFetch = globalThis.fetch) 
       res = await fetchImpl('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
     } else if (provider === 'genspark') {
       res = await fetchImpl(`${GENSPARK_URL}/models`, { headers: { Authorization: `Bearer ${key}` } });
+    } else if (provider === 'openrouter') {
+      res = await fetchImpl(`${OPENROUTER_URL}/models`); // 공개 목록 — 이 성공은 인증 성공이 아니다(키는 checkLlm 이 본다)
     } else {
       return { ok: false, error: '알 수 없는 AI입니다.' };
     }
@@ -382,9 +436,14 @@ export async function listModels(provider, apiKey, rawFetch = globalThis.fetch) 
     if (!body.ok && provider === 'openai' && isQuota(body.error)) return { ok: false, error: OPENAI_NO_CREDIT };
     if (!body.ok && provider === 'openai' && isPermission(body.status, body.error)) return { ok: false, error: OPENAI_NO_MODEL_LIST };
     if (!body.ok && provider === 'genspark') return { ok: false, error: gensparkError(body) };
+    if (!body.ok && provider === 'openrouter') {
+      const r = openrouterResult(body.status, body.raw ?? body.error);
+      return { ok: false, error: `${r?.error ?? r?.warn ?? body.error} (HTTP ${body.status}).` }; // 이유·상태를 함께(listError 로 보인다)
+    }
     if (!body.ok) return { ok: false, error: body.error };
     const models = pickModels(provider, JSON.parse(body.text));
-    return { ok: true, models: provider === 'genspark' ? models : models.slice(0, 60) }; // Genspark 는 다 보여 준다(고를 수 있는 건 이 목록뿐)
+    // Genspark·OpenRouter 는 다 보여 준다(고를 수 있는 건 이 목록뿐이다)
+    return { ok: true, models: provider === 'genspark' || provider === 'openrouter' ? models : models.slice(0, 60) };
   } catch (e) {
     return { ok: false, error: clip(e?.message, key) || '목록을 못 가져왔습니다.' };
   }

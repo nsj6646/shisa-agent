@@ -133,7 +133,7 @@ v0.3.0에서 바뀐 것:
 
 AI는 선택입니다. AI 없이도 할 일, 오늘 할 일, 프로젝트, 집중하기, 일정 알림, 근무 시간 인사, 응원과 춤 같은 기본 기능은 그대로 쓸 수 있습니다. 캐릭터와 자유롭게 대화하거나 브리핑 요약을 받고 싶을 때만 AI를 하나 연결하면 됩니다. 여기서는 이 AI를 "뇌"라고 부릅니다.
 
-| 기능 | 뇌 없음 | Gemini·OpenAI·Claude API·Genspark 키 | Codex | Claude Code |
+| 기능 | 뇌 없음 | Gemini·OpenAI·Claude API·Genspark·OpenRouter 키 | Codex | Claude Code |
 |---|:-:|:-:|:-:|:-:|
 | 캐릭터·패널, 할 일 보기·고치기, 오늘 할 일, 직접 만든 프로젝트, 집중하기 | ✓ | ✓ | ✓ | ✓ |
 | 캐릭터 고르기·만들기, 대사 고치기 | ✓ | ✓ | ✓ | ✓ |
@@ -200,6 +200,7 @@ AI 없이 쓰는 중에 캐릭터를 두 번 누르면 「오늘 할 일 얼마�
 - Codex: [Codex CLI 설치 안내](https://developers.openai.com/codex)대로 설치하고 로그인하세요.
 - API 키: Gemini·OpenAI·Claude API 키가 있다면 설치 마법사에 붙여 넣기만 하면 됩니다. 따로 설치할 건 없습니다.
 - Genspark: 유료 플랜이 있다면 `gsk login` 한 키를 고르거나 키를 붙여 넣으면 됩니다. 자세한 건 [brain.md](docs/connect/brain.md#genspark)에 있습니다.
+- OpenRouter: 여러 회사 모델(Claude·GPT·Gemini 등)을 키 하나로 쓰려면 키를 붙여 넣으면 됩니다. 자세한 건 [brain.md](docs/connect/brain.md#openrouter)에 있습니다.
 
 #### 업데이트
 
@@ -307,6 +308,7 @@ cd ~/shisa-agent && ./ops/install.sh
 - Codex: [Codex CLI 설치 안내](https://developers.openai.com/codex)대로 설치하고 로그인하세요.
 - API 키: Gemini·OpenAI·Claude API 키가 있다면 설치 마법사에 붙여 넣기만 하면 됩니다. 따로 설치할 건 없습니다.
 - Genspark: 유료 플랜이 있다면 `gsk login` 한 키를 고르거나 키를 붙여 넣으면 됩니다. 자세한 건 [brain.md](docs/connect/brain.md#genspark)에 있습니다.
+- OpenRouter: 여러 회사 모델(Claude·GPT·Gemini 등)을 키 하나로 쓰려면 키를 붙여 넣으면 됩니다. 자세한 건 [brain.md](docs/connect/brain.md#openrouter)에 있습니다.
 
 ##### 6. 설치 마법사
 
@@ -402,18 +404,19 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 |---|---|---|---|
 | `onboarded` |  | 새 설치는 `false` | 설치 마법사를 마쳤는지. `false`인 동안은 브리핑·정리 작업(모델)을 하나도 돌리지 않고, 작업 기록과 레포도 읽지 않습니다. 마법사의 「다 했어요」나 「설치는 나중에 할게요」를 누르면 `true`가 됩니다. 이 키가 없는 예전 설정은 마친 것으로 봅니다 |
 | `readSessions` |  | 새 설치는 `false` | 이 맥의 Claude Code·Codex 작업 기록(`~/.claude/projects`, `~/.codex/sessions`)을 읽을지. 마법사의 「더 연결하기」나 설정 창 「이 맥에서 읽는 것」에서 켜고 끕니다. 예전 설정은 `true` |
-| `brain.provider` | `CY_AGENT_BRAIN` | 새 설치는 `local`(아직 안 고름), 예전 설정은 `claude-code` | 뇌. `claude-code` · `codex` · `gemini` · `openai` · `anthropic`(Claude API 키) · `genspark` · `local`(뇌 없음) |
+| `brain.provider` | `CY_AGENT_BRAIN` | 새 설치는 `local`(아직 안 고름), 예전 설정은 `claude-code` | 뇌. `claude-code` · `codex` · `gemini` · `openai` · `anthropic`(Claude API 키) · `genspark` · `openrouter` · `local`(뇌 없음) |
 | `brain.geminiApiKey` | `CY_AGENT_GEMINI_API_KEY` / `GEMINI_API_KEY` |  | Gemini 키 |
 | `brain.openaiApiKey` | `CY_AGENT_OPENAI_API_KEY` / `OPENAI_API_KEY` |  | OpenAI 키 |
 | `brain.anthropicApiKey` | `CY_AGENT_ANTHROPIC_API_KEY` |  | Claude API 키. `ANTHROPIC_API_KEY`는 Claude Code도 쓰는 이름이라 일부러 읽지 않습니다 |
 | `brain.gensparkApiKey` | `CY_AGENT_GENSPARK_API_KEY` |  | Genspark 키. 비워 두면 `gsk login`이 남긴 키(`~/.genspark-tool-cli/config.json`)를 쓸 때마다 읽습니다. 유료 플랜이 있어야 대답합니다 |
+| `brain.openrouterApiKey` | `CY_AGENT_OPENROUTER_API_KEY` / `OPENROUTER_API_KEY` |  | OpenRouter 키(`sk-or-…`). 대화·브리핑 모델은 `brainModels.openrouter`에서 고릅니다. OpenRouter 사용료는 별도입니다 |
 | `user.name` / `user.aliases` | `CY_AGENT_USER_NAME` | git `user.name` | 부를 이름 / 지식그래프에서 "나"로 볼 다른 이름들. 비워 두면 git 이름을 부르고, git 이름·이메일 아이디·맥 계정 이름도 "나"로 봅니다 |
 | `repoRoots` |  | 새 설치는 `[]`, 예전 설정은 `["~/code"]` | 코드를 고쳐도 되는 레포 폴더. 개요의 내 커밋도 이 폴더에서만 읽습니다. 이 밖은 건드리지 않습니다 |
 | `allowMcp` |  | `[]` | 커넥터 밖에서 채팅이 더 써도 되는 MCP 서버 이름(예: `["notion"]`). 여기 없는 서버는 Claude Code에 등록돼 있어도 브리핑·채팅에서 쓰지 않습니다 |
 | `connectors.<기능>` | `CY_AGENT_SLACK_USER_TOKEN`, `CY_AGENT_CALENDAR_ICS_URL`, `CY_AGENT_MAIL_PASSWORD` | 전부 off | 위 [연결](#연결) 참고 |
 | `slackBotToken` / `slackAppToken` / `slackUserId` | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_USER_ID` |  | (선택) Slack 봇 DM·할 일 캔버스. [slack.md](docs/connect/slack.md) |
 | `models.quick` / `.general` / `.code` / `.light` | `CY_AGENT_MODEL_QUICK` / `_GENERAL` / `_CODE` / `_LIGHT` | Sonnet / Sonnet / Opus / Haiku | 더블클릭 대화 / 브리핑·채팅 / 코드 고치기 / 가벼운 일 (Claude Code일 때) |
-| `brainModels.<뇌>.quick` / `.general` / `.light` |  | 그 AI 기본 | Codex·Gemini·OpenAI·Genspark일 때 쓸 모델. 설정 창 「세부 모델」에서 지금 AI 칸만 바뀌고 다른 AI 값은 그대로입니다 |
+| `brainModels.<뇌>.quick` / `.general` / `.light` |  | 그 AI 기본 | Codex·Gemini·OpenAI·Genspark·OpenRouter일 때 쓸 모델. 설정 창 「세부 모델」에서 지금 AI 칸만 바뀌고 다른 AI 값은 그대로입니다. OpenRouter는 `openai/gpt-4.1-mini`처럼 공급자 접두사를 포함해 적습니다 |
 | `autoMerge` |  | `[]` | 묻지 않고 머지까지 할 레포(`owner/name`). 설정 창이나 채팅으로 바꿀 수 있습니다 |
 | `briefing.exclude` |  | `[]` | 브리핑에서 뺄 출처(`mail`·`calendar`·`slack`·`issues`·`sessions`) |
 | `calendarAlert.minutesBefore` |  | `[10]` | 일정 몇 분 전에 알릴지(양의 정수 분, 몇 개든, 예: `[15, 5]`, 하루 전은 `[1440]`). `[]`이면 알림을 끕니다. 설정 창 「일정 알림」에서 고칩니다 |
@@ -435,7 +438,7 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 
 토큰·API 키·ICS 주소는 `config.json`에 평문으로 저장됩니다. 대신 이 파일은 권한 600(나만 읽기)으로 만들고(터미널 설치는 `install.sh`를 돌릴 때마다 다시 맞춥니다), 데몬은 키나 ICS 주소를 로그·오류 메시지에 남기지 않습니다. ICS 주소는 비밀번호나 마찬가지이니, 어딘가에 노출됐다면 캘린더에서 주소를 재설정하세요.
 
-뇌로 고른 AI 회사(Anthropic·OpenAI·Google·Genspark)에는 브리핑과 대화에 필요한 글이 전송됩니다. 뇌를 쓰지 않으면 밖으로 나가는 것은 없습니다.
+뇌로 고른 AI 회사(Anthropic·OpenAI·Google·Genspark)와 OpenRouter(그리고 OpenRouter가 고른 추론 공급자)에는 브리핑과 대화에 필요한 글이 전송됩니다. OpenRouter API 사용료는 다른 구독과 별도로 부과됩니다. 뇌를 쓰지 않으면 밖으로 나가는 것은 없습니다.
 
 앱은 새 버전이 나왔는지 보려고 하루에 한 번 GitHub(`api.github.com`)에 최신 버전 번호를 묻습니다. 이때 내 데이터는 보내지 않고, 설정의 「이 앱」에서 끌 수 있습니다.
 

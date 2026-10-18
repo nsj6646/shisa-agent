@@ -6,7 +6,8 @@ import { okCharacterId, MEDIA_SLOTS } from './character.js';
 export const CHECK_IDS = ['net', 'claude', 'services', 'gh', 'local'];
 export const okCheckId = (id) => typeof id === 'string' && CHECK_IDS.includes(id);
 export const MODEL_ROLES = ['quick', 'general', 'code', 'light'];
-const okModel = (id) => typeof id === 'string' && /^[\w.-]{1,64}$/.test(id);
+// 모델 이름 모양(데몬 agent/src/models.ts MODEL_ID 와 같게 — OpenRouter 는 공급자 접두사와 `/` 가 들어간다)
+export const okModel = (id) => typeof id === 'string' && /^[A-Za-z0-9._:/-]{1,100}$/.test(id);
 const okSource = (s) => typeof s === 'string' && /^[a-z0-9-]{1,32}$/.test(s);
 const okPhraseKey = (k) => typeof k === 'string' && /^[a-z0-9_]{1,40}$/.test(k);
 // 자동 머지 레포 owner/name(데몬 agent/src/auto-merge.ts normSlug 와 같은 모양 — 링크는 데몬이 다듬지만 창은 owner/name 만 보낸다)
@@ -56,7 +57,7 @@ export function sanitizeSettingsPatch(p) {
   if (p.brainModels !== undefined) {
     const b = p.brainModels;
     if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'provider' && k !== 'models')) return null;
-    if (!['codex', 'gemini', 'openai', 'genspark'].includes(b.provider) || !b.models || typeof b.models !== 'object' || Array.isArray(b.models)) return null;
+    if (!['codex', 'gemini', 'openai', 'genspark', 'openrouter'].includes(b.provider) || !b.models || typeof b.models !== 'object' || Array.isArray(b.models)) return null;
     const m = {};
     for (const [k, v] of Object.entries(b.models)) {
       if (!['quick', 'general', 'light'].includes(k) || !(v === null || okModel(v))) return null;
