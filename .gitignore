@@ -23,3 +23,6 @@ logs/
 
 # desktop: 생성되는 아이콘
 desktop/assets/icon.*
+
+# 임시 산출물 (설명 HTML, 초안 등)
+scratchpad/

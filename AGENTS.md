@@ -11,3 +11,7 @@ Use the five canonical triage labels. Read `docs/agents/triage-labels.md` before
 ### Domain docs
 
 Single-context: root `GLOSSARY.md` and `docs/adr/`. Read `docs/agents/domain.md` before exploring the codebase.
+
+## Scratchpad
+
+Detailed explanations and temporary artifacts (HTML, drafts, one-off notes) go to `./scratchpad/`.
