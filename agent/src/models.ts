@@ -3,7 +3,7 @@
 // - 뇌마다의 세부 모델(roleModel): Claude 로 답하는 뇌(Claude Code·Claude API)는 cfg.models, 그 밖의 뇌는 cfg.brainModels[뇌].
 //   뇌를 바꿔도 다른 뇌의 값을 덮어쓰지 않는다. 값이 없으면 그 뇌의 기본(undefined)
 // - modelFits: 그 뇌에 보내도 되는 이름인가(Codex 에 claude-… 이름을 넘기지 않게)
-import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, type BrainProvider, type Config } from "./config.ts";
+import { BRAIN_PROVIDERS, DEFAULT_GENERAL_MODEL, type BrainProvider, type CodingProvider, type Config } from "./config.ts";
 
 export type ModelChoice = { id: string; label: string; role: "code" | "general" | "light" };
 // 채팅·가벼운 일의 역할(코드 작업 AI·모델은 coding.ts)
@@ -64,9 +64,15 @@ export function roleModel(cfg: Pick<Config, "models" | "brain"> & { brainModels?
 
 // 큰 것부터(코딩 → 일반 → 경량). 같은 모델이 두 역할이면 한 번만.
 // 고르는 칸은 Claude 모델로 답하는 뇌(Claude Code·Claude API)일 때만. Gemini·OpenAI·Codex·로컬이면 빈 목록(칸을 숨긴다)
-// 코드 작업 AI 가 Codex 면 코드 작업 칸은 Codex 모델(brainModels.codex.code, 정하지 않았으면 없음 = Codex 기본)
-export function modelChoices(cfg: Config, coder: "claude-code" | "codex" = "claude-code"): ModelChoice[] {
+// 코드 작업 AI 가 Codex 면 코드 작업 칸은 Codex 모델(brainModels.codex.code, 정하지 않았으면 없음 = Codex 기본).
+// pi 면 설정한 OpenRouter 코딩 모델 하나만(다른 뇌 모델을 섞지 않는다)
+export function modelChoices(cfg: Config, coder: CodingProvider = "claude-code"): ModelChoice[] {
   const out: ModelChoice[] = [];
+  if (coder === "pi") {
+    const pm = cfg.brainModels?.openrouter?.code;
+    if (pm && modelFits("openrouter", pm)) out.push({ id: pm, label: modelLabel(pm), role: "code" });
+    return out;
+  }
   const cx = cfg.brainModels?.codex?.code;
   if (coder === "codex" && cx && modelFits("codex", cx)) out.push({ id: cx, label: `Codex · ${cx}`, role: "code" });
   const provider = cfg.brain?.provider ?? "claude-code";

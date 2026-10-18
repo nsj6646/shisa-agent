@@ -101,7 +101,7 @@ export type SettingsPatch = {
   workStart?: string; lunchTime?: string; workEnd?: string; workDays?: number[]; startAlert?: boolean; leaveAlert?: boolean;
   character?: CharacterId;
   // Claude 가 아닌 뇌의 세부 모델: { provider, models: { 역할: 이름 | null(그 뇌 기본으로) } } — 그 뇌 칸만 바꾼다
-  // code 는 Codex 만(Codex 로 코드 작업할 때 모델)
+  // code 는 Codex(Codex 로 코드 작업)·OpenRouter(pi 로 코드 작업)만
   brainModels?: { provider: BrainProvider; models: Partial<Record<ChatRole | "code", string | null>> };
   // 코드 작업 AI(모델은 위 models.code · brainModels.codex.code)
   coding?: { provider: CodingProvider };
@@ -140,7 +140,7 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
     if (!ms || typeof ms !== "object" || Array.isArray(ms)) throw new SettingsError("brainModels.models must be an object");
     const m: Partial<Record<ChatRole | "code", string | null>> = {};
     for (const [k, v] of Object.entries(ms)) {
-      if (!(CHAT_ROLES as readonly string[]).includes(k) && !(k === "code" && p === "codex")) throw new SettingsError(`unknown model role for ${p}: ${k}`);
+      if (!(CHAT_ROLES as readonly string[]).includes(k) && !(k === "code" && (p === "codex" || p === "openrouter"))) throw new SettingsError(`unknown model role for ${p}: ${k}`);
       if (v === null || v === "") { m[k as ChatRole] = null; continue; }
       if (typeof v !== "string" || !modelFits(p, v)) throw new SettingsError(`brainModels.models.${k} must be a ${p} model name`);
       m[k as ChatRole] = v;
@@ -151,7 +151,7 @@ export function validatePatch(body: unknown, cfg: Pick<Config, "models">): Setti
     const c = b.coding as Record<string, unknown>;
     if (!c || typeof c !== "object" || Array.isArray(c)) throw new SettingsError("coding must be an object");
     for (const k of Object.keys(c)) if (k !== "provider") throw new SettingsError(`unknown key: coding.${k}`);
-    if (!(CODING_PROVIDERS as readonly unknown[]).includes(c.provider)) throw new SettingsError("coding.provider must be claude-code|codex");
+    if (!(CODING_PROVIDERS as readonly unknown[]).includes(c.provider)) throw new SettingsError("coding.provider must be claude-code|codex|pi");
     out.coding = { provider: c.provider as CodingProvider };
   }
   if (b.briefing !== undefined) {
@@ -511,7 +511,7 @@ export class Settings {
     this.cfg.brainModels = all;
   }
 
-  // 지금 뇌의 세부 모델 칸. 코드 작업 칸만 대화 AI 와 따로(코드 작업 AI 가 Claude Code 또는 Codex — codeSlot). 경량은 Claude 뇌면 수집·제목, 그 밖이면 제목 짓기
+  // 지금 뇌의 세부 모델 칸. 코드 작업 칸만 대화 AI 와 따로(코드 작업 AI 는 Claude Code·Codex·pi — codeSlot). 경량은 Claude 뇌면 수집·제목, 그 밖이면 제목 짓기
   private slots(): SettingsView["modelSlots"] {
     const c = this.cfg;
     const p = c.brain?.provider ?? "claude-code";
@@ -528,25 +528,33 @@ export class Settings {
     return { provider: p, title, claude, roles };
   }
 
-  // 코드 작업 칸: 코드 작업 AI(Claude Code·Codex)가 준비됐으면 그 AI 의 모델을 고른다. 둘 다 없으면 막고 이유
+  // 코드 작업 칸: 코드 작업 AI(Claude Code·Codex·pi)가 준비됐으면 그 AI 의 모델을 고른다. 없으면 막고 이유
   private codeSlot(label: string) {
     const c = this.cfg;
     const avail = this.coders();
     const provider = codingProvider(c, avail);
     const codexWhy = commandOnPath("codex", this.env) ? CODEX_AUTH_MISSING : "Codex 를 찾을 수 없어요. Codex CLI 를 설치하고 로그인해 주세요";
+    const piBin = !!avail.pi; // 준비 판단은 coding.ts 한 곳(설정 창은 그 결과만 쓴다)
+    const piKey = !!c.brain?.openrouterApiKey;
+    const piModel = !!c.brainModels?.openrouter?.code;
+    const piCan = piBin && piKey; // 모델은 아직 안 골랐어도 고를 수 있게 행을 연다(모델을 골라야 준비 완료)
+    const piReady = piCan && piModel;
+    const piWhy = !piBin ? "pi 를 찾을 수 없어요. pi(pi-coding-agent)를 설치한 뒤 데몬을 다시 켜 주세요" : !piKey ? "OpenRouter 키를 연결해야 해요(패널 모델 탭)" : "pi 코딩 모델(OpenRouter)을 골라 주세요";
     const coder: CoderSlot = {
       provider,
       choices: [
         { id: "claude-code", label: "Claude Code", ready: avail.claude ?? null, ...(avail.claude === false ? { why: "Claude Code 에 로그인되어 있지 않아요" } : {}) },
         { id: "codex", label: "Codex", ready: !!avail.codex, ...(avail.codex ? {} : { why: codexWhy }) },
+        { id: "pi", label: "pi", ready: piReady, ...(piReady ? {} : { why: piWhy }) },
       ],
     };
-    const ready = provider === "codex" ? !!avail.codex : avail.claude !== false;
-    const value = provider === "codex" ? c.brainModels?.codex?.code ?? null : c.models.code;
-    if (ready) return { role: "code" as const, label, value, enabled: true, coder };
-    const any = avail.claude !== false || !!avail.codex;
+    const ready = provider === "codex" ? !!avail.codex : provider === "pi" ? piCan : avail.claude !== false;
+    const value = provider === "codex" ? c.brainModels?.codex?.code ?? null : provider === "pi" ? c.brainModels?.openrouter?.code ?? null : c.models.code;
+    if (ready) return { role: "code" as const, label, value, enabled: true, coder, ...(provider === "pi" && !piModel ? { why: piWhy } : {}) };
+    const any = avail.claude !== false || !!avail.codex || piReady;
+    const name = provider === "codex" ? "Codex" : provider === "pi" ? "pi" : "Claude Code";
     return { role: "code" as const, label, value, enabled: false, coder,
-      why: any ? `${provider === "codex" ? "Codex" : "Claude Code"} 가 준비되지 않았어요. 코드 작업 AI 를 바꾸거나 연결해 주세요` : "Claude Code 나 Codex 를 연결하면 코드 작업을 맡길 수 있어요" };
+      why: any ? `${name} 가 준비되지 않았어요. 코드 작업 AI 를 바꾸거나 연결해 주세요` : "Claude Code·Codex·pi 중 하나를 연결하면 코드 작업을 맡길 수 있어요" };
   }
 
   // onboarded 를 처음 적으면 config.json 이 "새 방식"(onboarding.ts)이 되어 빈 칸의 기본값이 바뀐다(작업 기록 끔·레포 폴더 없음·뇌 미선택).

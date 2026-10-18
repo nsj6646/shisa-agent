@@ -103,7 +103,7 @@ test("설정 창 코드 작업 칸: 대화 AI 와 상관없이 코드 작업 AI 
   let code = s.view().modelSlots.roles.find((r) => r.role === "code")!;
   assert.equal(code.enabled, true, "Gemini 대화 + Codex 코드 작업");
   assert.equal(code.coder?.provider, "codex", "Claude Code 가 없으면 Codex 로");
-  assert.deepEqual(code.coder?.choices.map((c) => [c.id, c.ready]), [["claude-code", false], ["codex", true]]);
+  assert.deepEqual(code.coder?.choices.map((c) => [c.id, c.ready]), [["claude-code", false], ["codex", true], ["pi", false]]);
   avail.codex = false;
   code = s.view().modelSlots.roles.find((r) => r.role === "code")!;
   assert.equal(code.enabled, false);
@@ -141,4 +141,45 @@ test("도구 없는 뇌의 채팅 안내: 코드 요청을 제안으로 넘기�
   assert.equal(chatSystemFor(cfg), CHAT_SYSTEM_NOTOOLS);
   assert.match(CHAT_SYSTEM_NOTOOLS_CODER, /proposals 로 넘긴다/);
   assert.doesNotMatch(CHAT_SYSTEM_NOTOOLS, /proposals 로 넘긴다|코딩 실행기/);
+});
+
+test("pi 코드 작업: 준비 = pi 명령 + 시사 OpenRouter 키 + 코딩 모델, 저장은 coding.provider·brainModels.openrouter.code", () => {
+  const cfg = load({ brain: { provider: "claude-code", openrouterApiKey: "sk-or-x" }, brainModels: { openrouter: { code: "openai/gpt-4.1-mini" } }, coding: { provider: "pi" } });
+  assert.deepEqual(codingChoice(cfg, undefined, { pi: true }), { provider: "pi", model: "openai/gpt-4.1-mini" });
+  assert.equal(codingReady(cfg, { pi: true }), true);
+  assert.equal(codingReady(cfg, { pi: false }), false, "pi 명령이 없으면 준비 안 됨");
+  cfg.brain.openrouterApiKey = undefined;
+  assert.equal(codingReady(cfg, { pi: true }), false, "키가 없으면 준비 안 됨");
+  cfg.brain.openrouterApiKey = "sk-or-x";
+  cfg.brainModels!.openrouter!.code = undefined;
+  assert.equal(codingReady(cfg, { pi: true }), false, "모델이 없으면 준비 안 됨");
+  cfg.brainModels!.openrouter!.code = "gpt-no-prefix";
+  assert.equal(codingReady(cfg, { pi: true }), false, "OpenRouter 접두사 없는 이름은 버린다");
+  cfg.brainModels!.openrouter!.code = "openai/gpt-4.1-mini";
+  assert.deepEqual(codingChoice(cfg, "claude-opus-5-5", { pi: true }), { provider: "pi", model: "openai/gpt-4.1-mini" }, "실행기에 안 맞는 이름은 버린다");
+  cfg.brain.provider = "codex";
+  assert.equal(codingProvider(cfg, { claude: true, codex: true, pi: true }), "pi", "고른 pi 가 이긴다");
+  assert.equal(codingReady(cfg, { pi: true, codex: true, claude: true }), true);
+
+  // 저장·복원: coding.provider 는 pi, 모델은 brainModels.openrouter.code(다른 뇌 값은 그대로)
+  const dir = mkdtempSync(join(tmpdir(), "cy-coding-pi-"));
+  try {
+    const path = join(dir, "config.json");
+    const c = load({ chat: {} });
+    const s = new Settings(c, { path, env: {}, coders: () => ({ claude: false, codex: false, pi: true }) });
+    assert.ok(s.put({ brainModels: { provider: "openrouter", models: { code: "openai/gpt-4.1-mini" } } }).ok);
+    assert.ok(s.put({ coding: { provider: "pi" } }).ok);
+    const file = JSON.parse(readFileSync(path, "utf8"));
+    assert.deepEqual([file.coding, file.brainModels.openrouter.code], [{ provider: "pi" }, "openai/gpt-4.1-mini"]);
+    assert.equal(new Settings(load(file), { path, env: {}, coders: () => ({ pi: true }) }).view().modelSlots.roles.find((r) => r.role === "code")!.coder?.provider, "pi");
+    // 모델을 아직 안 골랐어도 행은 열려 있어야 고를 수 있다(pi 준비 = pi 명령 + 키 + 모델)
+    const noModel = join(dir, "no-model.json");
+    const s2 = new Settings(load({ brain: { provider: "claude-code", openrouterApiKey: "sk-or-x" }, coding: { provider: "pi" } }), { path: noModel, env: {}, coders: () => ({ pi: true }) });
+    const slot0 = s2.view().modelSlots.roles.find((r) => r.role === "code")!;
+    assert.equal(slot0.enabled, true);
+    assert.equal(slot0.value, null);
+    assert.match(slot0.coder!.choices.find((x) => x.id === "pi")!.why!, /모델/);
+    assert.ok(s2.put({ brainModels: { provider: "openrouter", models: { code: "openai/gpt-4.1-mini" } } }).ok);
+    assert.equal(s2.view().modelSlots.roles.find((r) => r.role === "code")!.value, "openai/gpt-4.1-mini");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

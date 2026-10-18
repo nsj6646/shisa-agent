@@ -4,13 +4,14 @@
 // git-mutex.ts 로 짧게 줄 세우고, 테스트·네트워크 명령은 비동기라 데몬(다른 run·채팅)을 멈추지 않는다.
 // 수정 run 안의 서브에이전트는 isolation: "worktree" 로 각자 워크트리를 하나씩 팔 수 있다(agent-worktrees.ts)
 import { codexQuery } from "./codex-coder.ts";
+import { createPiQuery, type PiToolCall } from "./pi-coder.ts";
 import { codingChoice, type CoderAvail } from "./coding.ts";
 import { query, getSessionInfo, type HookCallback, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { HOME_DIR, type Config } from "./config.ts";
+import { HOME_DIR, type CodingProvider, type Config } from "./config.ts";
 import type { Proposal } from "./store.ts";
 import { loadInstructions } from "./instructions.ts";
 import { codeGuidelines } from "./guidelines.ts";
@@ -21,7 +22,7 @@ import { cleanupWorktree } from "./worktree-keep.ts";
 import { repoGit, shAsync } from "./git-mutex.ts";
 import { WorktreeIsolation } from "./agent-worktrees.ts";
 import { IS_WIN, pathWithin, spawnSpec, type Plat, type SpawnSpec } from "./plat.ts";
-import { configSetsAlias, ghSub, isGitName, prCreateBlocked, shellSegments, shellWordsNorm, shellWrapper, substsOf } from "./permissions.ts";
+import { DENIED_STEP, configSetsAlias, ghSub, isGitName, prCreateBlocked, shellSegments, shellWordsNorm, shellWrapper, substsOf, waitStep, type PermOrigin, type PermWait } from "./permissions.ts";
 
 export type FixResult = {
   ok: boolean; summary: string; branch?: string; log: string[];
@@ -167,7 +168,20 @@ export type FixDeps = {
   beforeFinish?: (wt: string) => { block?: string; warn?: string } | undefined; // 마무리(테스트) 직전 검사 — block 이면 실패
   hooks?: (wt: string) => HookCallback[];                 // PreToolUse 훅 더하기(noShip·서브에이전트 가드 뒤)
   onRun?: (runId: string) => void;                        // run 을 만들자마자(세션 창·카드 연결)
+  piApprove?: PiApprove;                                  // pi 실행기의 도구 판정(셸 승인 카드·파일 범위). 없으면 pi 도구는 모두 막힌다
 };
+// pi 도구 하나를 시사에 물어보기: cwd = 작업 워크트리, origin = 승인 카드를 띄울 자리
+// onWait: 카드를 띄웠을 때(wait)·결정이 났을 때(allowed·denied) — 세션 창 진행 표시
+// 반환값이 없으면 pi 실행기는 도구를 실행하지 않는다(안전한 쪽으로)
+export type PiApprove = (req: { name: string; input: Record<string, unknown>; cwd: string }, origin: PermOrigin, signal?: AbortSignal, onWait?: (w: PermWait) => void) => Promise<{ allow: boolean; reason?: string }>;
+// pi 실행기는 시사가 관리하는 OpenRouter 키를 쓴다(개인 키·설정으로 몰래 가지 않게). 키가 없으면 시작에서 실패한다
+const piQueryFor = (cfg: Config) => ((args: Parameters<typeof createPiQuery>[0]) => createPiQuery(args, { apiKey: cfg.brain?.openrouterApiKey })) as unknown as typeof query;
+// pi 실행기의 도구 판정을 코드 작업 옵션에 붙인다(다른 실행기는 안 쓴다)
+function piDecideTool(provider: CodingProvider, deps: FixDeps, cwd: string, origin: PermOrigin, step: (s: string) => void) {
+  if (provider !== "pi" || !deps.piApprove) return undefined;
+  const approve = deps.piApprove;
+  return (call: PiToolCall, signal?: AbortSignal) => approve({ ...call, cwd }, origin, signal, (w) => step(w.phase === "wait" ? waitStep(origin.via) : w.phase === "denied" ? DENIED_STEP : `승인됐어요 — ${call.name}`));
+}
 
 // 스트리밍 입력: 세션 창에서 보낸 메시지를 다음 사용자 턴으로 밀어 넣는다
 export class InputQueue implements AsyncIterable<SDKUserMessage> {
@@ -572,7 +586,10 @@ export async function runFix(cfg: Config, p: Proposal, onStep: (s: string) => vo
   s.input.push(prompt);
 
   try {
-    const out = await drive(s, deps.query ?? (coding.provider === "codex" ? codexQuery : query), sdkOptions(cfg, wt, { model: coding.model }, deps.hooks?.(wt), iso), deps, step);
+    const permOrigin: PermOrigin = { via: p.threadId ? "chat" : "hover", runId: s.run.id, ...(p.threadId ? { threadId: p.threadId } : {}) };
+    const decideTool = piDecideTool(coding.provider, deps, wt, permOrigin, step);
+    const q = deps.query ?? (coding.provider === "pi" ? piQueryFor(cfg) : coding.provider === "codex" ? codexQuery : query);
+    const out = await drive(s, q, { ...sdkOptions(cfg, wt, { model: coding.model }, deps.hooks?.(wt), iso), ...(decideTool ? { decideTool } : {}) }, deps, step);
     await iso.closeAll();
     if (!out) { s.run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 변경을 그대로 남겨 뒀어요.", branch, worktree: wt, log, runId: s.run.id }; }
     return await finishLocal(s, out, { wt, branch }, step, log, deps);
@@ -691,7 +708,10 @@ export function prepareContinue(cfg: Config, spec: ContinueSpec, deps: FixDeps =
       s.input.push(prompt, undefined, true); // 시작 전에 보낸 메시지보다 앞에
 
       iso = new WorktreeIsolation({ roots: [wt], author: cfg.gitAuthor, worktreesDir: wtDir, log: (ev) => run.log(ev) });
-      const out = await drive(s, deps.query ?? (coding.provider === "codex" ? codexQuery : query), sdkOptions(cfg, wt, { model: coding.model, ...(canResume ? { resume: sid, forkSession: true } : {}) }, [], iso), deps, step);
+      const permOrigin: PermOrigin = { via: "hover", runId: run.id };
+      const decideTool = piDecideTool(coding.provider, deps, wt, permOrigin, step);
+      const q = deps.query ?? (coding.provider === "pi" ? piQueryFor(cfg) : coding.provider === "codex" ? codexQuery : query);
+      const out = await drive(s, q, { ...sdkOptions(cfg, wt, { model: coding.model, ...(canResume ? { resume: sid, forkSession: true } : {}) }, [], iso), ...(decideTool ? { decideTool } : {}) }, deps, step);
       await iso.closeAll();
       if (!out) { run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 변경을 그대로 남겨 뒀어요.", branch, worktree: wt, log }; }
       return await finishLocal(s, out, { wt, branch }, step, log, deps);

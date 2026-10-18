@@ -1196,6 +1196,32 @@ export class PermissionBroker {
     if (d.always && rule) this.rules.add(rule);
     return { behavior: "allow", updatedInput: input };
   }
+
+  // pi 코드 작업 실행기(pi-coder.ts)의 도구 판정: 셸은 읽기처럼 보여도 늘 카드(force — localAuto·기억된 규칙이 우회하지 못한다),
+  // 파일 도구는 부르는 쪽이 작업 폴더 안인지 보고 force 를 정한다(안이면 quick 의 allow/deny 그대로, 밖이면 카드).
+  // 하드 차단은 승인·force 와 무관하게 그대로(quick 이 먼저 본다). force 카드에는 [항상 허용]을 붙이지 않는다
+  async decidePi(toolName: string, input: Record<string, unknown>, origin: PermOrigin, c: PermCtx, force = false, signal?: AbortSignal, onWait?: (w: PermWait) => void): Promise<PermDecision> {
+    const q = this.quick(toolName, input, c);
+    if (q.decision === "deny") return { behavior: "deny", message: q.reason };
+    if (q.decision === "allow" && !force) return { behavior: "allow", always: false };
+    let pv: Preview | undefined;
+    try {
+      const s = this.special ? await this.special(toolName, input) : undefined;
+      if (s && "deny" in s) return { behavior: "deny", message: s.deny };
+      pv = s;
+    } catch { pv = undefined; }
+    pv ??= buildPreview(toolName, input, c);
+    if (signal?.aborted) return { behavior: "deny", message: "실행이 끝나 승인을 받지 않았어요" };
+    const rule = force ? undefined : ruleFor(toolName, input, c);
+    const { decision } = this.queue.requestPermission({ toolName, card: pv.card, fields: pv.fields, ...(pv.body ? { body: pv.body, bodyKind: pv.bodyKind } : {}), ...(rule ? { rule } : {}), origin }, signal);
+    const tell = (phase: PermWait["phase"]) => { try { onWait?.({ toolName, input, phase }); } catch {} };
+    tell("wait");
+    const d = await decision;
+    tell(d.behavior === "deny" ? "denied" : "allowed");
+    if (d.behavior === "deny") return { behavior: "deny", message: d.message };
+    if (d.always && rule) this.rules.add(rule);
+    return { behavior: "allow", always: d.always };
+  }
 }
 
 // 데몬이 하나 붙인다(core.ts). 없으면(cli·테스트) 대화형 호출의 쓰기는 거부된다

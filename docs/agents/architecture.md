@@ -24,7 +24,7 @@ Update it when a subsystem changes job or a flow changes.
 | Config & status | `config.ts`, `settings.ts`, `status.ts`, `connections.ts` | env > `~/.cy-agent/config.json` > defaults; settings write path; what is connected |
 | Brains | `brain.ts`, `providers.ts`, `models.ts`, `chat-models.ts`, `local-mode.ts`, `feature-brain.ts` | Briefing/chat brains; HTTP-only providers (Gemini, OpenAI, Genspark, OpenRouter); model choice |
 | Chat & runs | `chat.ts`, `runs.ts`, `followup.ts`, `btw.ts`, `thread-agents.ts`, `attachments.ts`, `run-inbox.ts` | Panel chat, run records, continue, /btw, attachments |
-| Coding runs | `coding.ts`, `fixer.ts`, `codex-coder.ts`, `agent-worktrees.ts`, `worktree-keep.ts`, `git.ts`, `git-mutex.ts`, `gh.ts`, `merge-request.ts`, `auto-merge.ts`, `repo-lock.ts` | Approved fix runs: worktree → coder → tests → local result |
+| Coding runs | `coding.ts`, `fixer.ts`, `codex-coder.ts`, `pi-coder.ts` (+`pi-gate.js`), `agent-worktrees.ts`, `worktree-keep.ts`, `git.ts`, `git-mutex.ts`, `gh.ts`, `merge-request.ts`, `auto-merge.ts`, `repo-lock.ts` | Approved fix runs: worktree → coder → tests → local result. Coders: Claude Code, Codex (app-server), pi (RPC subprocess; every tool call goes through the daemon's approval gate) |
 | Permissions | `permissions.ts`, `guard.ts`, `bash-readonly.ts` | Tool-permission state machine, hard blocks (secrets, protected branches, `gh pr create`), read-only guard |
 | Reactions & copy | `reactions.ts`, `phrases.ts`, `characters.ts`, `character-store.ts`, `voice.ts` | Bubbles/stickers, approval cards, phrase catalog |
 | Data | `store.ts`, `todos.ts`, `todo-*.ts`, `dashboard.ts`, `manual-projects.ts`, `profile.ts`, `ctx-tools.ts` | Knowledge graph + todos in SQLite; dashboard and prompt-context snapshots |
@@ -38,7 +38,7 @@ Subdirectories: `ingest/` (Slack and Claude Code session ingestion), `kg/` (know
 The flow most changes touch:
 
 1. A request arrives in chat or the panel (`chat.ts`); work starts only from an approved proposal (`core.ts`, `actions.ts`).
-2. `fixer.ts` creates a git worktree, asks the chosen coder (`coding.ts` → Claude Code or `codex-coder.ts`) to change files, runs the tests, then `finishLocal` leaves the changes **uncommitted in the worktree**. The host never commits, pushes, or opens a PR (`permissions.ts` hard-blocks `gh pr create`).
+2. `fixer.ts` creates a git worktree, asks the chosen coder (`coding.ts` → Claude Code, `codex-coder.ts`, or `pi-coder.ts`) to change files, runs the tests, then `finishLocal` leaves the changes **uncommitted in the worktree**. The host never commits, pushes, or opens a PR (`permissions.ts` hard-blocks `gh pr create`). For pi, `pi-gate.js` forwards every tool call to `core.approvePiTool` (shell commands always become approval cards; file tools stay inside the worktree).
 3. A finished or stopped run keeps its worktree when dirty (`worktree-keep.ts`, `agent-worktrees.ts`).
 4. "Continue" (`followup.ts`, `reusableWorktree` in `fixer.ts`) restarts from that kept worktree — no remote branch or PR needed.
 5. The app shows progress over SSE (`bus.ts` → `desktop/renderer/session.js`; `runs.ts` for records, `desktop/src/session.js` for the pure logic).

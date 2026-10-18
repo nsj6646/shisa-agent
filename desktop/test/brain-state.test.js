@@ -18,7 +18,7 @@ test('normStatus: 모양이 아니면 null, 이상한 값은 버린다', () => {
   assert.equal(normStatus({ brain: {} }), null);
   const s = normStatus({ ...status(), chat: 'yes', coder: { claude: 'x', codex: true }, connectors: [null, { cap: 'mail' }] });
   assert.equal(s.chat, null);
-  assert.deepEqual(s.coder, { claude: null, codex: true });
+  assert.deepEqual(s.coder, { claude: null, codex: true, pi: false });
   assert.deepEqual(s.connectors.map((c) => c.cap), ['mail']);
 });
 
@@ -103,7 +103,7 @@ test('세션 창 입력: 뇌가 없으면 막고 [연결하기], 수정 작업 �
   const cont = composerMode({ id: 'r2', kind: 'fix', status: 'done' });
   assert.equal(cont.mode, 'continue');
   assert.deepEqual([gateComposer(cont, { ready: true, coder: false }).locked], ['coder']);
-  assert.match(gateComposer(cont, { ready: true, coder: false }).placeholder, /Claude Code 또는 Codex를 연결하면/);
+  assert.match(gateComposer(cont, { ready: true, coder: false }).placeholder, /Claude Code·Codex·pi/);
   assert.equal(gateComposer(composerMode(null), { ready: false }).locked, undefined, '꺼진 입력은 그대로');
 });
 
@@ -149,6 +149,9 @@ test('코드 작업 버튼(brainView.coder): 데몬이 본 코드 작업 AI 기�
   const st = (features, coder = {}) => status({ brain: { provider: 'codex', ready: true }, coder, features: { background: { by: 'codex' }, mcp: false, ...features } });
   assert.equal(brainView({ status: st({ code: true, coder: 'codex' }, { claude: false, codex: true }) }).coder, true, 'Codex 만');
   assert.equal(normStatus(st({ code: true, coder: 'codex' })).features.coder, 'codex');
+  assert.equal(normStatus(st({ code: true, coder: 'pi' }, { pi: true })).features.coder, 'pi');
+  assert.equal(brainView({ status: st({ code: true, coder: 'pi' }, { pi: true }) }).coder, true, 'pi 만 준비돼도 코드 작업 버튼');
+  assert.equal(brainView({ status: st({ code: true, coder: 'pi' }, { pi: true }) }).pi, true);
   assert.equal(brainView({ status: st({ code: false, coder: 'claude-code' }, { claude: false, codex: true }), caps: { claude: false, codex: true } }).coder, false, 'Claude Code 로 골라 뒀는데 없으면 이 컴퓨터에 Codex 가 있어도 숨김');
   assert.equal(brainView({ status: st({ code: false, coder: 'codex' }, { codex: true }) }).coder, false, 'Codex 로그인 파일이 없으면');
   assert.equal(brainView({ status: st({ code: null }), caps: { claude: null, codex: false } }).coder, true, '확인 전엔 막지 않는다');

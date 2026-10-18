@@ -36,7 +36,7 @@ v0.3.0에서 바뀐 것:
 - 근무 시간: 출근 인사, 점심시간 알림, 퇴근 10분 전 인사를 합니다. 아래 [근무 시간](#근무-시간)에 적었습니다.
 - 채팅: 캐릭터를 두 번 눌러 말을 걸면 답이 머리 위 말풍선으로 뜹니다. 패널 채팅에서는 길게 대화하고 파일도 붙일 수 있습니다. 입력창으로 한 말은 늘 같은 대화방(「캐릭터 대화」)에 이어지고, 지난 대화는 목록에 남습니다.
 - 패널 채팅 입력줄 옆 드롭다운에서 그 대화에 쓸 AI와 모델을 고를 수 있습니다. 키나 로그인이 된 다른 AI(Codex, Gemini 등)로도 그 대화만 보낼 수 있고, 고른 것은 대화마다 기억합니다. 답 아래에 어떤 모델이 답했는지 작게 나옵니다. 기본 AI 설정은 그대로입니다.
-- 코드 작업: Claude Code 또는 Codex가 있으면 레포 코드를 고쳐 달라고 시킬 수 있습니다. 별도 워크트리에서 고치고 테스트를 돌린 다음, 변경과 테스트 결과를 보여 주고 끝납니다. 자동 커밋·푸시는 하지 않고 PR은 만들지 않습니다. 변경은 그 워크트리에 그대로 남아 있어 직접 검토할 수 있습니다. 어느 쪽으로 고칠지와 모델은 설정 창 「세부 모델」의 코드 작업 칸에서 고릅니다. Codex로 고칠 때는 그 워크트리 안에만 파일을 쓰고 네트워크는 쓰지 않습니다.
+- 코드 작업: Claude Code·Codex·pi 중 하나가 있으면 레포 코드를 고쳐 달라고 시킬 수 있습니다. 별도 워크트리에서 고치고 테스트를 돌린 다음, 변경과 테스트 결과를 보여 주고 끝납니다. 자동 커밋·푸시는 하지 않고 PR은 만들지 않습니다. 변경은 그 워크트리에 그대로 남아 있어 직접 검토할 수 있습니다. 어느 쪽으로 고칠지와 모델은 설정 창 「세부 모델」의 코드 작업 칸에서 고릅니다. Codex는 그 워크트리 안에만 파일을 쓰고 네트워크는 쓰지 않습니다. pi는 `npm i -g @earendil-works/pi-coding-agent`로 설치하고 시사에 연결한 OpenRouter 키·모델로 돌며, 모델이 요청한 셸 명령은 실행 전에 매번 승인 카드로 확인합니다(개인 pi 설정·확장·키는 쓰지 않습니다).
 
 | 패널: 할 일 | 패널: 개요·브리핑 | 패널: 채팅 |
 |---|---|---|
@@ -417,6 +417,7 @@ cd ~/shisa-agent && ./ops/uninstall.sh
 | `slackBotToken` / `slackAppToken` / `slackUserId` | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_USER_ID` |  | (선택) Slack 봇 DM·할 일 캔버스. [slack.md](docs/connect/slack.md) |
 | `models.quick` / `.general` / `.code` / `.light` | `CY_AGENT_MODEL_QUICK` / `_GENERAL` / `_CODE` / `_LIGHT` | Sonnet / Sonnet / Opus / Haiku | 더블클릭 대화 / 브리핑·채팅 / 코드 고치기 / 가벼운 일 (Claude Code일 때) |
 | `brainModels.<뇌>.quick` / `.general` / `.light` |  | 그 AI 기본 | Codex·Gemini·OpenAI·Genspark·OpenRouter일 때 쓸 모델. 설정 창 「세부 모델」에서 지금 AI 칸만 바뀌고 다른 AI 값은 그대로입니다. OpenRouter는 `openai/gpt-4.1-mini`처럼 공급자 접두사를 포함해 적습니다 |
+| `brainModels.codex.code` / `brainModels.openrouter.code` |  |  | 코드 작업 AI 의 모델(Codex · pi). 설정 창 코드 작업 칸에서 고릅니다 |
 | `autoMerge` |  | `[]` | 묻지 않고 머지까지 할 레포(`owner/name`). 설정 창이나 채팅으로 바꿀 수 있습니다 |
 | `briefing.exclude` |  | `[]` | 브리핑에서 뺄 출처(`mail`·`calendar`·`slack`·`issues`·`sessions`) |
 | `calendarAlert.minutesBefore` |  | `[10]` | 일정 몇 분 전에 알릴지(양의 정수 분, 몇 개든, 예: `[15, 5]`, 하루 전은 `[1440]`). `[]`이면 알림을 끕니다. 설정 창 「일정 알림」에서 고칩니다 |

@@ -1,5 +1,7 @@
 // 오케스트레이터: 수집·브리핑·제안·승인·실행을 묶고 말풍선(Bus)과 Slack으로 알린다.
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { HOME_DIR, type Config } from "./config.ts";
 import type { Bus } from "./bus.ts";
 import { LEDGER_KEEP_DAYS, TRASH_KEEP_DAYS, type Store, type Proposal, type Todo, type TodoPatch, type AutoEvidence, type TrashedTodo } from "./store.ts";
@@ -14,7 +16,7 @@ import { attentionSince, formatAttention } from "./ingest/slack.ts";
 import { recordFeedback, rememberFact, extractRememberedFact, applyMemoryOps, listFacts, forgetFact, factId } from "./profile.ts";
 import { think as realThink, type Thought } from "./brain.ts";
 import { briefingMilestone, briefingTask, readySources, type SourceId } from "./briefing-sources.ts";
-import { runFix as realRunFix, mergePr as realMergePr, normalizeBase, resolveRepo, localDoneLine, type FixResult } from "./fixer.ts";
+import { runFix as realRunFix, mergePr as realMergePr, normalizeBase, resolveRepo, localDoneLine, isBlockedBash, type FixResult, type PiApprove } from "./fixer.ts";
 import { Chat, converse as realConverse, todoThreadFor, unfinishedLine, RESTART_WHY, type Converse, type RunCommand, type SendOpts, type Sent } from "./chat.ts";
 import type { SlashCommands } from "./commands.ts";
 import type { Thread, ThreadKind, ChatPick } from "./store.ts";
@@ -30,7 +32,7 @@ import { FollowUps, type FollowUpPorts } from "./followup.ts";
 import { runs as globalRuns, inRunContext } from "./runs.ts";
 import { Actions, actionBubbleOf, actionStatusLine, meetingsContext, PERMISSION, type ActionDeps, type ActionStatus, type ConfirmOut, type PendingAction } from "./actions.ts";
 import { actionBlocks } from "./slack/blocks.ts";
-import { PermissionBroker, PermissionRules, setBroker, type PermissionRule } from "./permissions.ts";
+import { PermissionBroker, PermissionRules, setBroker, type PermCtx, type PermOrigin, type PermWait, type PermissionRule } from "./permissions.ts";
 import { WRITE_GUIDE } from "./brain.ts";
 import { MERGE_TYPE, askLabel, infoOf, mergeAttempt, mergeBlock, mergeCard, mergeIdFor, parsePrRef, prKey, realMergeCommit, realPrStatus, type PrLookup } from "./merge-request.ts";
 import type { MergeAsk, AutoMergeAsk } from "./chat.ts";
@@ -91,6 +93,7 @@ export type Deps = {
   sleep?: (ms: number) => Promise<void>;
   // 로컬 뇌 브리핑의 시간대 인사를 띄워도 되나(main: 아침 인사는 출근 인사와 같은 하루 한 번 기록, 다른 시간대는 출근 인사를 막 띄웠으면 안 띄움). 없으면 늘 띄움
   greetOk?: (part: string) => boolean;
+  piApprove?: PiApprove; // pi 실행기 도구 판정(기본: 시사 브로커·승인 카드)
 };
 
 // 같은 Slack 메시지를 너무 자주 고치지 않게(레이트리밋) 진행 로그 갱신을 묶는다
@@ -111,6 +114,21 @@ export function mergedLine(st: { number: number; title: string; url: string; rep
 }
 
 export const LOCAL_GREET_ID = "local-greet";
+
+// pi 도구 이름 → 시사 도구 판정 이름(하드 차단·미리보기·규칙이 아는 이름). 모르는 도구는 정책에 없다
+const PI_POLICY: Record<string, string> = { read: "Read", grep: "Grep", find: "Glob", ls: "LS", edit: "Edit", write: "Write", bash: "Bash", powershell: "Bash" };
+const PI_POLICY_EDIT = new Set(["Edit", "Write"]);
+// pi 입력(path) → 시사가 아는 입력(file_path). 경로가 없는 검색 도구는 cwd 로 본다
+const piPolicyInput = (tool: string, input: Record<string, unknown>): Record<string, unknown> =>
+  tool === "Read" || PI_POLICY_EDIT.has(tool) ? { ...input, file_path: input.path }
+  : tool === "Grep" || tool === "Glob" || tool === "LS" ? { ...input, path: input.path }
+  : input;
+// pi 의 파일 도구는 path 의 ~ 를 홈으로 펴고 @ 접두사를 뗀다(path-utils.ts resolvePath) — 작업 범위 판정도 같게 펴야 한다
+function piExpandPath(raw: string): string {
+  const p = raw.startsWith("@") ? raw.slice(1) : raw;
+  if (p === "~") return homedir();
+  return /^~[\\/]/.test(p) ? join(homedir(), p.slice(2)) : p;
+}
 
 export class Agent {
   private briefing?: Promise<void>;
@@ -150,6 +168,8 @@ export class Agent {
     this.permissionRules = new PermissionRules(store);
     this.broker = new PermissionBroker(this.permissionRules, this.actions);
     if (this.deps.useBroker !== false) setBroker(this.broker);
+    // pi 코드 작업 실행기(pi-coder.ts)의 도구 판정: 시사의 기존 승인 카드·하드 차단·작업 범위 규칙을 그대로 쓴다
+    this.deps.piApprove ??= (req, origin, signal, onWait) => this.approvePiTool(req, origin, signal, onWait);
     // 대화가 gh pr merge 를 시도하다 하드 차단되면 받아 둔다 → 답이 끝날 때 그 대화의 머지 승인 카드로(chat.ts)
     this.broker.onMergeAttempt = (a) => this.noteMergeAttempt(a.command, a.cwd, a.origin);
     // 패널·캐릭터 대화가 띄운 서브에이전트는 답과 떼어 백그라운드로(bg-agents.ts) — 답은 바로 끝나고 다음 말이 기다리지 않는다.
@@ -423,6 +443,31 @@ export class Agent {
       if (today.length) this.reactions?.todayProgress(today);
       else this.reactions?.todoProgress(this.store.openTodos(), this.store.doneTodos(100));
     } catch {}
+  }
+
+  // pi 코드 작업 실행기의 도구 하나를 판정한다(승인 기반):
+  //  - 셸(bash·powershell): 배포 방지·하드 차단 검사 뒤에는 늘 승인 카드 — 읽기처럼 보여도 묻는다(localAuto·기억된 규칙이 우회하지 못한다)
+  //  - 파일 도구: 작업 워크트리 안 읽기·수정은 묻지 않고(반복 승인 없음), 밖이면 카드(경로 탈출·심링크는 insideRoots 가 실제 경로로 본다)
+  //  - 모르는 도구는 거부. 카드는 시사의 기존 대기열(Actions.requestPermission)에 쌓이고, 중지·만료는 그쪽이 처리한다
+  private async approvePiTool(req: { name: string; input: Record<string, unknown>; cwd: string }, origin: PermOrigin, signal?: AbortSignal, onWait?: (w: PermWait) => void): Promise<{ allow: boolean; reason?: string }> {
+    const deny = (reason: string) => ({ allow: false, reason });
+    const tool = PI_POLICY[req.name];
+    if (!tool) return deny(`시사: '${req.name}' 도구는 코드 작업에서 쓰지 않아요`);
+    const input = piPolicyInput(tool, req.input);
+    const c: PermCtx = { roots: this.cfg.repoRoots, brainDir: join(HOME_DIR, "brain"), cwd: req.cwd, home: homedir(), cyHome: HOME_DIR, port: this.cfg.port, localAuto: false, worktrees: [req.cwd] };
+    if (tool === "Bash") {
+      const cmd = String(input.command ?? "");
+      if (isBlockedBash(cmd)) return deny("커밋·푸시·머지·PR 생성은 하지 않아요 — 변경은 워크트리에 미커밋으로 남겨 둡니다");
+      const d = await this.broker.decidePi(tool, input, origin, c, true, signal, onWait);
+      return d.behavior === "deny" ? deny(d.message) : { allow: true };
+    }
+    const q = this.broker.quick(tool, input, c);
+    if (q.decision === "deny") return deny(q.reason);
+    const raw = tool === "Read" || PI_POLICY_EDIT.has(tool) ? input.file_path : input.path;
+    const p = resolve(req.cwd, piExpandPath(typeof raw === "string" && raw ? raw : "."));
+    if (insideRoots(p, [req.cwd])) return { allow: true }; // 작업 폴더 안: 읽기·수정은 반복 승인 없이
+    const d = await this.broker.decidePi(tool, input, origin, c, true, signal, onWait);
+    return d.behavior === "deny" ? deny(d.message) : { allow: true };
   }
 
   // 캐릭터 반응(reactions.ts): main 이 붙인다. 없으면(테스트) 예전 말풍선 그대로

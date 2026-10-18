@@ -33,12 +33,13 @@ export type Config = {
   // quick: 캐릭터 더블클릭 빠른 대화(스레드 kind hover) 전용 — 패널 모델 선택과 따로. 설정 창에서 바꾼다.
   // loadConfig 는 늘 채운다(기본 Sonnet). 손으로 만든 cfg(시험)에 없으면 hover 도 general
   // 코드 작업 AI(코드 고치기 실행기). 없으면 coding.ts codingProvider(Claude Code, Claude Code 가 없고 Codex 만 있으면 Codex).
-  // 모델은 여기 두지 않는다: Claude Code 면 models.code, Codex 면 brainModels.codex.code(설정 창 「세부 모델」의 코드 작업 칸)
+  // 모델은 여기 두지 않는다: Claude Code 면 models.code, Codex 면 brainModels.codex.code, pi 면 brainModels.openrouter.code
+  // (설정 창 「세부 모델」의 코드 작업 칸). pi 는 시사가 관리하는 OpenRouter 키를 쓴다
   coding?: { provider: CodingProvider };
   models: { code: string; general: string; light: string; quick?: string };
   // Claude 가 아닌 뇌(Codex·Gemini·OpenAI·Genspark·OpenRouter)의 세부 모델: 뇌 → 역할(general·quick·light) → 모델 이름.
   // 설정 창 「세부 모델」이 지금 뇌의 칸만 고친다(다른 뇌 값은 그대로). 없으면 그 뇌의 기본(models.ts roleModel)
-  // code 는 Codex 만(Codex 로 코드 작업할 때 모델). Claude Code 의 코드 작업 모델은 models.code
+  // code 는 Codex(Codex 로 코드 작업)·OpenRouter(pi 로 코드 작업)만. Claude Code 의 코드 작업 모델은 models.code
   brainModels?: Partial<Record<BrainProvider, Partial<Record<"general" | "quick" | "light" | "code", string>>>>;
   // 브리핑에서 뺄 출처(settings.ts BRIEFING_SOURCES 의 id: mail·calendar·slack·issues·sessions). 설정 창에서 끈다
   briefing?: { exclude: string[] };
@@ -353,7 +354,8 @@ export function brainModelsOf(raw: unknown): Config["brainModels"] {
   for (const [p, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!(BRAIN_PROVIDERS as readonly string[]).includes(p) || p === "local" || !v || typeof v !== "object" || Array.isArray(v)) continue;
     const roles: Partial<Record<"general" | "quick" | "light" | "code", string>> = {};
-    for (const r of (p === "codex" ? ["general", "quick", "light", "code"] : ["general", "quick", "light"]) as ("general" | "quick" | "light" | "code")[]) {
+    // code: Codex·pi(OpenRouter)만 — 각 코드 작업 AI 의 모델 칸
+    for (const r of (p === "codex" || p === "openrouter" ? ["general", "quick", "light", "code"] : ["general", "quick", "light"]) as ("general" | "quick" | "light" | "code")[]) {
       const id = (v as Record<string, unknown>)[r];
       if (typeof id === "string" && /^[A-Za-z0-9._:/-]{1,100}$/.test(id)) roles[r] = id;
     }
@@ -368,14 +370,14 @@ export function ensureHomeDir(dir = HOME_DIR) {
   try { chmodSync(dir, 0o700); } catch { /* 내 폴더가 아니면 그대로 */ }
 }
 
-export type CodingProvider = "claude-code" | "codex";
-export const CODING_PROVIDERS: readonly CodingProvider[] = ["claude-code", "codex"];
+export type CodingProvider = "claude-code" | "codex" | "pi";
+export const CODING_PROVIDERS: readonly CodingProvider[] = ["claude-code", "codex", "pi"];
 const MODEL_NAME = /^[A-Za-z0-9._:/-]{1,100}$/;
 // config.json coding: { provider } 만 읽는다(모르는 값이면 없음 = 기본)
 export function codingOf(raw: unknown): Config["coding"] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const p = (raw as Record<string, unknown>).provider;
-  return p === "codex" || p === "claude-code" ? { provider: p } : undefined;
+  return p === "codex" || p === "claude-code" || p === "pi" ? { provider: p } : undefined;
 }
 // 예전(이 기능의 첫 모양) coding.model 은 읽기만: 그 실행기의 칸(models.code · brainModels.codex.code)이 비어 있을 때 그 값으로
 export function legacyCodingModel(raw: unknown, provider: CodingProvider): string | undefined {

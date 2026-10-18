@@ -273,7 +273,7 @@ export function runBackgroundAgent(cfg: Config, store: Store, job: { threadId: s
 export const CHAT_SYSTEM_INLINE = chatSystem(CHAT_CONTEXT_INLINE); // 되돌리기(contextMode inline)
 export const CHAT_SYSTEM_NOTOOLS = chatSystem(CHAT_CONTEXT_NOTOOLS, NO_TOOLS_SYSTEM, ""); // Claude Code 가 아닌 뇌(업무 도구 없음)
 // 도구 없는 뇌라도 코드 작업 AI(Claude Code·Codex)가 준비됐으면: 코드 고치기 요청을 제안(proposals)으로 넘기게
-const CHAT_CONTEXT_NOTOOLS_CODER = "- 파일 수정·코딩 요청은 작은 수정도 proposals 로 넘긴다. 직접 파일 도구는 없어도 승인하면 코드 작업 AI(Claude Code 또는 Codex)가 작업한다. 레포 경로가 불명확하면 먼저 확인한다. 직접 코드를 확인하지 못했다면 확인했다고 말하지 말고 계획에 확인 절차를 넣는다.\n" + CHAT_CONTEXT_NOTOOLS;
+const CHAT_CONTEXT_NOTOOLS_CODER = "- 파일 수정·코딩 요청은 작은 수정도 proposals 로 넘긴다. 직접 파일 도구는 없어도 승인하면 코드 작업 AI(Claude Code·Codex·pi)가 작업한다. 레포 경로가 불명확하면 먼저 확인한다. 직접 코드를 확인하지 못했다면 확인했다고 말하지 말고 계획에 확인 절차를 넣는다.\n" + CHAT_CONTEXT_NOTOOLS;
 export const CHAT_SYSTEM_NOTOOLS_CODER = chatSystem(CHAT_CONTEXT_NOTOOLS_CODER, NO_TOOLS_SYSTEM, "");
 // 채팅 시스템 프롬프트 고르기: Claude Code 가 아니면 도구 없는 것(코드 작업 AI 가 준비됐을 때만 코드 요청 안내를 더한다), Claude Code 면 contextMode 에 따라
 export const chatSystemFor = (cfg: Pick<Config, "contextMode"> & { brain?: Pick<Config["brain"], "provider"> }, coder: boolean | null = false) =>

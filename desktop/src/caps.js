@@ -14,8 +14,8 @@ export const sameCaps = (a, b) => a?.claude === b?.claude && a?.codex === b?.cod
 
 // 기능별 안내(누를 수 있는 곳에서 Claude Code 가 없을 때)
 export const CODER_HINTS = {
-  session: '작업 세션은 Claude Code 또는 Codex로 코드를 고칠 때 생겨요. 지금은 대화·브리핑·할 일만 써요.',
-  code: '코드 고치기는 Claude Code 또는 Codex가 있어야 해요. 설치 탭에서 연결할 수 있어요.',
+  session: '작업 세션은 Claude Code·Codex·pi로 코드를 고칠 때 생겨요. 지금은 대화·브리핑·할 일만 써요.',
+  code: '코드 고치기는 Claude Code 또는 Codex가 있어야 해요(pi 실행기·OpenRouter 키를 연결해도 돼요). 설치 탭에서 연결할 수 있어요.',
 };
 export const coderHint = (feature) => CODER_HINTS[feature] ?? CODER_HINTS.code;
 

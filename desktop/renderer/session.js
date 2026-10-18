@@ -695,7 +695,7 @@ function applyCoder() {
   if (off && !coderNote) {
     coderNote = document.createElement('div');
     coderNote.className = 'empty';
-    coderNote.textContent = '코드 고치기·새 작업은 Claude Code 또는 Codex가 있어야 해요. 여기서는 브리핑·대화 기록만 볼 수 있어요.';
+    coderNote.textContent = '코드 고치기·새 작업은 Claude Code·Codex·pi 중 하나가 있어야 해요. 여기서는 브리핑·대화 기록만 볼 수 있어요.';
     $('btn-new').after(coderNote);
   }
   if (coderNote) coderNote.hidden = !off;

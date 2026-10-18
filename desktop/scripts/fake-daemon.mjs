@@ -551,7 +551,7 @@ function fakeStatus() {
   return {
     brain: { provider: fakeCfg.provider, label, ready: fakeCfg.ready, local, detail: local ? '로컬 — 할 일 읽기·정해진 말만' : fakeCfg.ready ? `${label} 연결됨` : `${label} API 키가 없어요` },
     chat: !local && fakeCfg.ready,
-    coder: { claude: process.env.FAKE_NO_CLAUDE ? false : true, codex: false },
+    coder: { claude: process.env.FAKE_NO_CLAUDE ? false : true, codex: false, pi: process.env.FAKE_PI === '1' },
     connectors: [
       { cap: 'slack', label: 'Slack', mode: 'api', ready: true }, { cap: 'calendar', label: '캘린더', mode: 'api', ready: true },
       { cap: 'mail', label: '메일', mode: 'off', ready: false }, { cap: 'issues', label: '이슈', mode: 'off', ready: false },

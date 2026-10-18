@@ -50,6 +50,7 @@ import { statusOf } from "./status.ts";
 import { featureBrain, NEEDS_CLAUDE_MCP, NEEDS_CODER, withMcpBrain } from "./feature-brain.ts";
 import { mergePr } from "./fixer.ts";
 import { cleanupStaleCodexHomes } from "./codex-coder.ts";
+import { cleanupStalePiHomes } from "./pi-coder.ts";
 import { askBtw } from "./btw.ts";
 import { Focus, focusApi, focusDoneText } from "./focus.ts";
 import { brainAuthFailed, brainCreditNeeded, onBrainAuthChange } from "./providers.ts";
@@ -385,6 +386,9 @@ console.log(`[cy-agent] 버스 http://127.0.0.1:${cfg.port}`);
 // 지난 실행이 남긴 Codex 코드 작업용 임시 CODEX_HOME(인증 사본)을 지운다 — 포트를 잡은 뒤라 이 데몬 하나뿐이다
 const staleCodexHomes = cleanupStaleCodexHomes();
 if (staleCodexHomes.length) console.log(`[codex] 예전 임시 홈 ${staleCodexHomes.length}개 정리`);
+// pi 코드 작업용 임시 홈(시사 키 사본·지침)도 지난 실행에서 남았으면 지운다(지금 도는 것은 activePiHomes 로 제외)
+const stalePiHomes = cleanupStalePiHomes();
+if (stalePiHomes.length) console.log(`[pi] 예전 임시 홈 ${stalePiHomes.length}개 정리`);
 // 캘린더는 버스가 뜨자마자 가져온다(작업 기록 읽기 등 긴 시작 일이 끝날 때까지 「연결됨」인데 일정이 빈 채로 두지 않는다)
 // 일정 N분 전(설정 calendarAlert): 춤 + 말풍선(회의실·온라인 여부, 링크 버튼은 회의 링크, 없으면 캘린더 일정). 일정·분마다 한 번(DB에 남김)
 const stopMail = mailSync.schedule(); // 연결돼 있으면 바로 한 번, 그다음 15분마다

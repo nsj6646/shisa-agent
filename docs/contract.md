@@ -64,7 +64,7 @@ type Bubble = {
              "ready": true,          // null = 아직 모름(Claude Code 로그인 확인 전)
              "local": false, "detail": "Claude Code 연결됨" },
   "chat": true,                      // 말 걸 수 있나(뇌 준비 + local 아님). null = 모름
-  "coder": { "claude": true, "codex": false },
+  "coder": { "claude": true, "codex": false, "pi": false },
   "connectors": [{ "cap": "slack|calendar|mail|issues", "label": "Slack", "mode": "api|mcp|off", "ready": true }],
   "user": { "name": "길동" },
   "onboarded": true,
@@ -112,7 +112,8 @@ type Bubble = {
   "workStart": "09:30", "lunchTime": "12:30", "workEnd": "18:30", // HH:MM(24시간). 아니면 400, 출근이 퇴근보다 늦거나 같아도 400
   "workDays": [1, 2, 3, 4, 5],                            // 0 일~6 토, 하나 이상
   "startAlert": true, "leaveAlert": true,                 // 출근 인사·퇴근 10분 전 인사 켜고 끄기(기본 켬)
-  "character": "hachi"                                    // shisa·hachi·rakko·momonga·usagi·kani·chiikawa·kuri. 모르는 값은 400
+  "character": "hachi",                                   // shisa·hachi·rakko·momonga·usagi·kani·chiikawa·kuri. 모르는 값은 400
+  "coding": { "provider": "claude-code|codex|pi" }        // 코드 작업 AI(수정 run 실행기). pi 는 시사가 관리하는 OpenRouter 키와 brainModels.openrouter.code 로 돈다
 }
 ```
 

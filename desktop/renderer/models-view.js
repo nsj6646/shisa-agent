@@ -161,7 +161,7 @@ export function mountModels({ section, h, cy, getSisa, onSisa, gotoSetup }) {
     return h('div.card.models-card', null,
       h('h2', { text: '코드 작업' }),
       h('p.muted.small', null,
-        h('span', { text: '코드 작업 AI(Claude Code 또는 Codex)와 모델은 설정 창 「세부 모델」의 코드 작업 칸에서 골라요. ' }),
+        h('span', { text: '코드 작업 AI(Claude Code·Codex·pi)와 모델은 설정 창 「세부 모델」의 코드 작업 칸에서 골라요. ' }),
         cy.openSettings ? h('button.ghost.small', { type: 'button', text: '설정 열기', onclick: () => cy.openSettings() }) : null));
   }
 

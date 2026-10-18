@@ -73,7 +73,8 @@ async function save(patch) {
 // 지금 뇌(brain.provider)에 맞는 세부 모델 칸(데몬 settings.modelSlots). Claude 뇌는 Claude 모델 목록에서(models 로 저장),
 // 그 밖의 뇌(Codex·Gemini·OpenAI·Genspark·OpenRouter)는 그 뇌 목록(GET /chat/models — 채팅 드롭다운과 같은 출처)에서 고르고 brainModels 로 저장.
 // 그 뇌에서 안 쓰는 칸은 막고 이유를 보인다. 코드 작업 칸은 대화 AI 와 따로: 코드 작업 AI(Claude Code·Codex)를 고르고 그 AI 의 모델을 고른다
-// (Claude Code → models.code, Codex → brainModels.codex.code — 패널 모델 탭도 이 칸을 가리킨다). 코드 작업 AI 가 준비됐을 때만 연다
+// (Claude Code → models.code, Codex → brainModels.codex.code, pi → brainModels.openrouter.code — 패널 모델 탭도 이 칸을 가리킨다).
+// 코드 작업 AI 가 준비됐을 때만 연다
 let brainLists = null; // GET /chat/models 의 brains(뇌 → 모델 목록)
 async function loadBrainLists() {
   const r = await cy.chatModels?.().catch(() => null);
@@ -97,7 +98,7 @@ function renderModels() {
   $('config-path').textContent = settings.configPathLabel || settings.configPath ? `(${settings.configPathLabel || settings.configPath} 에 저장)` : '';
   const roles = show ? slots?.roles ?? (settings.modelRoles ?? []).map((r) => ({ ...r, value: settings.models?.[r.role], enabled: true })) : [codeSlot];
   const list = claudeSlots ? null : (brainLists ?? []).find((b) => b.provider === slots.provider);
-  if ((!claudeSlots || codeSlot?.coder?.provider === 'codex') && brainLists === null) loadBrainLists();
+  if ((!claudeSlots || ['codex', 'pi'].includes(codeSlot?.coder?.provider)) && brainLists === null) loadBrainLists();
   for (const slot of roles) {
     if (slot.role === 'code' && slot.coder) { box.append(codeRow(slot)); continue; }
     const { role, label, value, enabled, why } = slot;
@@ -134,7 +135,7 @@ function renderModels() {
   }
 }
 
-// 코드 작업 칸: 「코드 작업 AI」(Claude Code·Codex) + 그 AI 의 모델. 저장은 coding.provider · models.code · brainModels.codex.code
+// 코드 작업 칸: 「코드 작업 AI」(Claude Code·Codex·pi) + 그 AI 의 모델. 저장은 coding.provider · models.code · brainModels.<실행기>.code
 function codeRow({ label, value, enabled, why, coder }) {
   const row = el('div', 'model-row');
   const lab = el('label', null, label);
@@ -158,26 +159,29 @@ function codeRow({ label, value, enabled, why, coder }) {
   const sel = el('select');
   sel.id = 'model-code';
   const add = (v, text) => { const o = el('option', null, text); o.value = v; o.selected = v === (value ?? ''); sel.append(o); };
-  const codex = coder.provider === 'codex';
+  const claudeCode = coder.provider === 'claude-code';
+  const modelProvider = coder.provider === 'pi' ? 'openrouter' : coder.provider; // pi 의 코딩 모델은 OpenRouter 칸(brainModels.openrouter.code)
+  const list = claudeCode ? null : (brainLists ?? []).find((b) => b.provider === modelProvider);
   if (!enabled) add(value ?? '', '쓰지 않아요');
-  else if (!codex) for (const o of settings.modelOptions ?? []) add(o.id, o.label);
+  else if (claudeCode) for (const o of settings.modelOptions ?? []) add(o.id, o.label);
   else {
-    const list = (brainLists ?? []).find((b) => b.provider === 'codex');
-    add('', 'Codex 기본');
+    add('', coder.provider === 'codex' ? 'Codex 기본' : '모델을 골라 주세요');
     for (const m of list?.models ?? []) if (m.id !== '') add(m.id, m.label && m.label !== m.id ? `${m.label} (${m.id})` : m.id);
     if (value && !(list?.models ?? []).some((m) => m.id === value)) add(value, value);
   }
   sel.disabled = !enabled;
   sel.addEventListener('change', async () => {
     sel.disabled = true;
-    const ok = await save(codex ? { brainModels: { provider: 'codex', models: { code: sel.value || null } } } : { models: { code: sel.value } });
+    const patch = claudeCode ? { models: { code: sel.value } } : { brainModels: { provider: modelProvider, models: { code: sel.value || null } } };
+    const ok = await save(patch);
     sel.disabled = false;
     if (!ok) sel.value = value ?? '';
     renderModels();
   });
   const picked = coder.choices.find((c) => c.id === coder.provider);
-  const desc = el('div', 'desc', enabled ? ROLE_DESC.code : (picked?.why ?? why ?? ''));
-  if (enabled && !codex && settings.envLocked?.includes('code')) desc.append(el('span', 'lock', ' · 환경변수로 정해져 있어서 데몬을 다시 켜면 그 값으로 돌아가요'));
+  const desc = el('div', 'desc', enabled ? (picked?.why ?? ROLE_DESC.code) : (picked?.why ?? why ?? ''));
+  if (enabled && claudeCode && settings.envLocked?.includes('code')) desc.append(el('span', 'lock', ' · 환경변수로 정해져 있어서 데몬을 다시 켜면 그 값으로 돌아가요'));
+  if (enabled && !claudeCode && list?.listError) desc.append(el('span', 'lock', ` · 목록: ${list.listError}`));
   const pick = el('div', 'code-ai');
   pick.append(ai, sel);
   row.append(lab, pick, desc);

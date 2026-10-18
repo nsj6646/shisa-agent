@@ -20,12 +20,12 @@ export function normStatus(raw) {
   return {
     brain: { provider: str(b.provider, 40), label: str(b.label, 60) || b.provider, ready: tri(b.ready), local: b.local === true, detail: str(b.detail) },
     chat: tri(s.chat),
-    coder: { claude: tri(coder.claude), codex: coder.codex === true },
+    coder: { claude: tri(coder.claude), codex: coder.codex === true, pi: coder.pi === true },
     features: {
       background: { by, ready: tri(bg.ready), detail: str(bg.detail) },
       mcp: tri(f.mcp),
       code: tri(f.code),
-      coder: f.coder === 'codex' ? 'codex' : f.coder === 'claude-code' ? 'claude-code' : null,
+      coder: f.coder === 'pi' ? 'pi' : f.coder === 'codex' ? 'codex' : f.coder === 'claude-code' ? 'claude-code' : null,
     },
     connectors: (Array.isArray(s.connectors) ? s.connectors : []).map(obj).filter((c) => c && typeof c.cap === 'string')
       .map((c) => ({ cap: str(c.cap, 20), label: str(c.label, 40), mode: str(c.mode, 10), ready: c.ready === true, ...(c.needs === 'claude-code' ? { needs: 'claude-code' } : {}) })),
@@ -34,7 +34,7 @@ export function normStatus(raw) {
 }
 
 // { status, sisa, caps } → { ready, known, provider, label, local, coder, codex, detail, connected: [cap…], background, mcp, needsClaude: [cap…] }
-// coder: 코드 작업(코드 고치기·이어 하기)을 맡길 수 있나 — 데몬이 본 코드 작업 AI(features.coder: Claude Code·Codex)가 준비됐나(features.code).
+// coder: 코드 작업(코드 고치기·이어 하기)을 맡길 수 있나 — 데몬이 본 코드 작업 AI(features.coder: Claude Code·Codex·pi)가 준비됐나(features.code).
 //   데몬이 모르면(Claude Code 로그인 확인 전·예전 데몬) 이 컴퓨터의 CLI 로 짐작(Claude Code 가 없다고 확인됐고 Codex 도 없을 때만 false)
 // background: 뒤에서 하는 정리를 누가 돌리나('claude-code' | 'codex' | null) · mcp: MCP 연결을 읽나(Claude Code 뇌만) · needsClaude: Claude Code 뇌여야 읽는 연결
 // ready: 말 걸 수 있나. 확인 중(Claude Code 로그인 확인 전)이면 막지 않는다(known=false) — 앱이 본 로그인이 없다고 할 때만 막는다
@@ -54,6 +54,7 @@ export function brainView({ status = null, sisa = null, caps = null } = {}) {
       detail: st.brain.detail,
       coder: st.features.code ?? (claude !== false || caps?.codex === true),
       codex: st.coder.codex || caps?.codex === true,
+      pi: st.coder.pi === true,
       connected: st.connectors.filter((c) => c.ready).map((c) => c.cap),
       name: st.user.name ?? '',
       background: st.features.background.by,
@@ -65,7 +66,7 @@ export function brainView({ status = null, sisa = null, caps = null } = {}) {
   const hasKey = !!sisa?.hasKey;
   return {
     ready: hasKey, known: false, provider: str(sisa?.provider, 40), label: '', local: sisa?.provider === 'none', detail: '',
-    coder: capClaude !== false || caps?.codex === true, codex: caps?.codex === true, connected: [], name: '',
+    coder: capClaude !== false || caps?.codex === true, codex: caps?.codex === true, pi: false, connected: [], name: '',
     background: null, mcp: null, needsClaude: [],
   };
 }
