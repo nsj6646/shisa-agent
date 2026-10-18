@@ -1,14 +1,14 @@
 // 작업 세션 이어서 하기 — 끝난 run 에 세션 창에서 말을 이어 붙인다(Claude·ChatGPT 처럼).
-//  - 수정 run: 앞선 run 에 연결된 새 수정 run(같은 브랜치에서 이어서 → 같은 PR 갱신, 머지는 늘 사용자 승인)
+//  - 수정 run: 앞선 run 에 연결된 새 수정 run(보존된 로컬 워크트리·브랜치에서 이어서 — 원격·PR 필요 없음)
 //  - 그 밖의 run(브리핑·채팅…): 그 run 의 마지막 결과를 맥락으로 채팅 한 번. 답은 앞선 run 기록에 이어 붙는다
 // 그리고 세션 창의 "＋ 새 작업": 레포 + 지시 → 명시 요청 제안(승인해야 실행)
 import { basename } from "node:path";
 import type { Config } from "./config.ts";
 import type { Store, Proposal } from "./store.ts";
-import { prepareContinue as realPrepare, fixBranch, type FixDeps, type FixResult, type Continuation, type ContinueSpec } from "./fixer.ts";
+import { prepareContinue as realPrepare, fixBranch, localDoneLine, type FixDeps, type FixResult, type Continuation, type ContinueSpec } from "./fixer.ts";
 import { finalOutput, inRunContext, summarizeRun, type Run, type RunRegistry } from "./runs.ts";
 import { findRepos } from "./git.ts";
-import { testsFromLog, type Reactions } from "./reactions.ts";
+import { type Reactions } from "./reactions.ts";
 import { phrase } from "./phrases.ts";
 import type { Bubble } from "./bus.ts";
 
@@ -76,10 +76,9 @@ export class FollowUps {
     if (!repo) return { ok: false, status: 409, error: "이 작업의 레포를 몰라서 이어서 할 수 없어요" };
     const branch = run.branch ?? (prop ? fixBranch(prop) : undefined);
     if (!branch) return { ok: false, status: 409, error: "이 작업의 브랜치를 몰라서 이어서 할 수 없어요" };
-    const prUrl = run.prUrl ?? (prop?.result?.startsWith("https://") ? prop.result : undefined);
     const prepare = this.p.prepare ?? realPrepare;
     const c = prepare(this.p.cfg, {
-      parent: run, repo, branch, ...(prUrl ? { prUrl } : {}), text, summary: summarizeRun(run, events),
+      parent: run, repo, branch, text, summary: summarizeRun(run, events),
       ...(prop ? { proposalId: prop.id } : {}), ...(prop?.base ? { base: prop.base } : {}), ...(model ? { model } : {}),
     }, { runs: this.p.runs, ...this.p.fixDeps });
     const title = this.p.runs.summary(c.run.id)?.title ?? run.title;
@@ -95,12 +94,10 @@ export class FollowUps {
     try {
       const r: FixResult = await c.start((s) => { steps.push(s); prog?.onStep(s); });
       if (r.ok) {
-        await this.p.slackPost?.(`✅ 이어서 한 작업 푸시 (\`${r.branch}\`)${r.prUrl ? ` — ${r.prUrl}` : ""}\n${r.summary}`, prop?.slackTs).catch(() => {});
-        if (prog) {
-          prog.progress.done(r.prUrl ? phrase("followup_pr") : phrase("fix_pushed", { branch: r.branch ?? "" }));
-          // 머지는 늘 사용자 승인 — 이어서 한 작업마다 따로 묻는다(id = 새 run)
-          if (r.prUrl) this.p.reactions()!.offerMerge({ id, title, prUrl: r.prUrl, summary: r.summary, branch: r.branch, tests: testsFromLog(r.log ?? steps) });
-        } else this.p.bubble({ text: phrase("followup_done", { title }), kind: "done", ttlMs: 20e3, link: r.prUrl });
+        // 이어서 한 작업도 로컬에서 끝난다 — 커밋·푸시·PR 없음. 변경은 앞선 워크트리(또는 새 워크트리)에 남는다
+        await this.p.slackPost?.(localDoneLine(r), prop?.slackTs).catch(() => {});
+        if (prog) prog.progress.done(phrase("fix_pushed", { branch: r.branch ?? "" }));
+        else this.p.bubble({ text: phrase("followup_done", { title }), kind: "done", ttlMs: 20e3 });
       } else {
         await this.p.slackPost?.(`⚠️ 이어서 한 작업 실패: ${r.summary}`, prop?.slackTs).catch(() => {});
         if (prog) prog.progress.fail(`"${title}" 실패했어요. 작업 세션을 봐 주세요`);

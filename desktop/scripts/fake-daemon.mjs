@@ -489,7 +489,7 @@ const FAKE_REACT = {
   merge: () => {
     const pid = `pr${++seq}`;
     merges.set(pid, { state: 'asking', prUrl: 'https://github.com/example/cy-agent/pull/7' });
-    emit('bubble', { id: `merge:${pid}`, text: "PR 올렸어요 — '패널 탭 순서 바꾸기' 머지할까요?", kind: 'proposal', proposalId: pid, actions: 'merge', image: 'merge', link: 'https://github.com/example/cy-agent/pull/7' });
+    emit('bubble', { id: `merge:${pid}`, text: "'패널 탭 순서 바꾸기' 머지할까요?", kind: 'proposal', proposalId: pid, actions: 'merge', image: 'merge', link: 'https://github.com/example/cy-agent/pull/7' });
   },
   // 채팅에서 시킨 머지 모양(검사·충돌 요약 + ✓/✗) · 실패한 검사로 막힌 것
   merge_pr: () => offerFakeMerge(fakeMerge({ number: 270 + (++seq % 20), title: '알림 배지 숫자' })),
@@ -505,9 +505,9 @@ const FAKE_REACT = {
   daily_all_complete: () => bubble({ text: '오늘 할 일 6개 다 끝냈어요! 최고예요 🎉 (스이시~사)', kind: 'done', image: 'daily_all_complete', ttlMs: 25000 }),
   progress: () => {
     const id = `progress:fix:${++seq}`;
-    ['워크트리 만드는 중이에요 🌿', '고치는 중이에요… ✏️', '테스트 돌리는 중이에~요 🧪', '테스트 통과했어요! ✅ 푸시했어요 (뿌듯한 시사)'].forEach((text, i) =>
+    ['워크트리 만드는 중이에요 🌿', '고치는 중이에요… ✏️', '테스트 돌리는 중이에~요 🧪', '테스트 통과했어요! ✅ 변경은 워크트리에 남겨 뒀어요'].forEach((text, i) =>
       setTimeout(() => emit('bubble', { id, text, kind: 'info', ttlMs: 120000 }), i * 1200));
-    setTimeout(() => emit('bubble', { id, text: 'PR 올렸어요 — 🚀 (스이시~사)', kind: 'done', ttlMs: 8000 }), 4 * 1200);
+    setTimeout(() => emit('bubble', { id, text: '변경을 워크트리에 남겨 뒀어요 — 검토해 주세요', kind: 'done', ttlMs: 8000 }), 4 * 1200);
   },
 };
 

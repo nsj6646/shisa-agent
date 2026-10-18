@@ -347,7 +347,7 @@ type FocusView = {
 
 - `GET /actions?status&threadId&limit` · `GET /actions/:id`: 쓰기 동작 확인 카드.
 - `POST /actions/:id/confirm { always? }` · `POST /actions/:id/cancel`.
-- 머지 승인은 PR까지 간 작업에 `merge` 스티커 + 「머지할까요?」로 온다.
+- 머지 승인은 채팅에서 시킨 PR 머지 요청에 `merge` 스티커 + 「머지할까요?」로 온다(일반 코드 작업은 PR을 만들지 않아 머지 카드도 없다).
   - `POST /proposals/:id/merge` → 200 `{ ok, state: "merged" }`, 409(이미 안 하기로 함), 500(실패, 다시 시도 가능)
   - `POST /proposals/:id/decline-merge` → 200 `{ ok, state: "declined" }`
   - `POST /proposals/:id/ask { text }` → 200 `{ ok, reply }`: 그 PR에 대해 한 번 묻기
@@ -367,7 +367,7 @@ type FocusView = {
 | `POST /proposals { repo, text }` → 201 | 「새 작업」(승인 대기 제안) |
 | `POST /runs/:id/message { text, model?, attachments?, clientId? }` | 돌고 있는 수정 run 의 다음 턴. 전달 대기 중이면 `{ msgId, pending: true }` |
 | `POST /runs/:id/messages/:msgId/now\|cancel` | 대기 중인 말 지금 보내기·빼기 |
-| `POST /runs/:id/interrupt` · `/stop` | 지금 턴 멈추기 · 세션 끝내기(커밋·푸시 안 함, 워크트리 정리) |
+| `POST /runs/:id/interrupt` · `/stop` | 지금 턴 멈추기 · 세션 끝내기(커밋·푸시 안 함, 미커밋 변경이 있는 워크트리는 남긴다) |
 | `POST /runs/:id/continue { text, model? }` → 202 | 끝난 run 이어서 하기(수정 run → 연결된 새 수정 run) |
 | `POST /runs/:id/btw { text }` | 곁질문. 그 run 기록만 보고 바로 답(끼어들지 않음) |
 | `POST /runs/:id/sync { watch? }` · `POST /runs/import { sessionId }` | 터미널 Claude Code 세션 불러오기 |
@@ -375,7 +375,8 @@ type FocusView = {
 수정 run의 안전장치:
 - 워크트리(`cy/…` 브랜치)에서만 돈다.
 - 에이전트의 git commit·push·merge와 gh pr merge·create는 훅이 막는다.
-- 커밋·푸시·PR은 데몬이 하고, 테스트가 실패하면 커밋하지 않는다.
+- 일반 작업은 커밋·푸시·PR 없이 워크트리에 변경을 남기고 끝난다. 테스트가 실패하거나 중지되면 실패로 알리고 변경은 지우지 않는다.
+- 이어서 하기는 보존된 로컬 워크트리·브랜치에서 출발한다(원격 브랜치·PR·GitHub 로그인이 필요 없다).
 
 대화 에이전트의 하드 차단(`permissions.ts` `HARD_DENY`: 비밀 파일 읽기·데몬 API 직접 호출 등)은 따옴표 쪼개기·glob·루프백 다른 표기(127.1·2130706433·[::1] 등)까지 걷어 보고, `.env`·`~/.cy-agent`를 언급하는 셸 명령은 묻지 않고 허용하지 않고 승인 카드로 돌린다. 그래도 이 목록은 셸 명령을 글로 읽어 맞춰 보는 것이라 완벽한 방어선이 아니다. 비밀은 애초에 에이전트가 닿는 폴더에 두지 않는 편이 안전하다.
 

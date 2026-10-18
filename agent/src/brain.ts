@@ -49,7 +49,7 @@ export type Thought = {
   reply_md: string; // Slack으로 보낼 상세(마크다운)
   todos: { key: string; title: string; source: string; link?: string; priority: number; description?: string; source_ref?: string }[];
   done_todo_ids: string[];
-  proposals: { repo: string; title: string; plan: string; base?: string }[]; // base: PR 대상 브랜치(채팅 제안만 채운다)
+  proposals: { repo: string; title: string; plan: string; base?: string }[]; // base: 작업 기준 브랜치(채팅 제안만 채운다)
   todo_ops?: TodoOp[]; // 사용자 요청 경로(DM)에서만
   plan_ops?: PlanOp[]; // 오늘 할 일(할 일 중 오늘로 고른 것, 로컬)
   memory_ops?: MemoryOp[]; // 사용자 요청 경로: 개인 기억 저장·삭제
@@ -125,7 +125,7 @@ const readOnlyRule = (c: Connectors) => `- 업무 데이터는 ${sourcesLine(c)}
 export const WRITE_RULE = `- 업무 도구는 사용자가 Claude Code 에 연결한 MCP 서버(메일·캘린더·Slack·이슈 등)·gh(읽기)·cy 맥락 도구, 그리고 Bash·Edit·Write·WebSearch·WebFetch 까지 쓸 수 있다. 쓰기 도구도 쓸 수 있다.
 - 쓰기(메일 발송·Slack 게시·문서 업로드·일정 응답·이슈 변경·파일 편집·셸 명령 등)는 실행 전에 사용자 승인 카드가 뜬다 — 사용자가 시킨 일에 필요한 쓰기는 망설이지 말고 바로 시도한다("직접 못 한다"고 하지 않는다). 거부되면 같은 호출을 되풀이하지 말고 다른 방법을 제안한다. 읽기는 그냥 된다.
 - 어떤 도구가 있는지 모르면 ToolSearch 로 찾아서 정확한 인자로 부른다. 연결된 도구가 없으면 없다고 말하고 연결 방법(설정의 커넥터)을 안내한다.
-- gh pr merge, 기본·보호 브랜치(main·master·develop)로 git push·force push·git merge, cy-agent 워크트리·cy/ 브랜치 밖의 git commit·push, rm -rf(허용 폴더 밖), 토큰·자격 증명 파일과 .env 읽기는 승인해도 막힌다(.env 만들기·쓰기는 된다 — Write 나 「echo KEY= >> .env」·「cp .env.example .env」 로, 키 값은 사용자가 채우게 비워 둔다). git commit·push 는 cy-agent 워크트리(~/.cy-agent/worktrees · 레포의 .claude/worktrees)나 cy/ 브랜치에서만 된다. 큰 코드 변경을 PR 로 내는 건 proposals 로. PR 머지는 gh 로 직접 하지 않는다 — 채팅에선 merges 로(사용자가 이번 말로 직접 시켰거나 자동 머지 레포면 데몬이 바로 머지, 아니면 머지 승인 카드 ✓).`;
+- gh pr merge·gh pr create, 기본·보호 브랜치(main·master·develop)로 git push·force push·git merge, cy-agent 워크트리·cy/ 브랜치 밖의 git commit·push, rm -rf(허용 폴더 밖), 토큰·자격 증명 파일과 .env 읽기는 승인해도 막힌다(.env 만들기·쓰기는 된다 — Write 나 「echo KEY= >> .env」·「cp .env.example .env」 로, 키 값은 사용자가 채우게 비워 둔다). git commit·push 는 cy-agent 워크트리(~/.cy-agent/worktrees · 레포의 .claude/worktrees)나 cy/ 브랜치에서만 된다. 큰 코드 변경은 proposals(수정 작업)로 — PR 은 만들지 않는다(변경은 워크트리에 미커밋으로 남는다). PR 머지는 gh 로 직접 하지 않는다 — 채팅에선 merges 로(사용자가 이번 말로 직접 시켰거나 자동 머지 레포면 데몬이 바로 머지, 아니면 머지 승인 카드 ✓).`;
 // 쓰기(승인 카드) 안내 — 채팅·팝오버·Slack DM 공용
 export const WRITE_GUIDE = `- 회의 수락·거절·미정은 연결된 캘린더 MCP 에 응답 도구가 있으면 그걸 바로 부른다(일정 id 는 "다가오는 회의"(프롬프트에 있거나 cy meetings_upcoming 도구)나 일정 목록 도구로 읽은 id 그대로). 어느 회의인지 애매하면 부르지 말고 되묻는다. 응답 도구가 없으면 직접 응답하라고 안내한다.
 - 쓰기 도구를 부르면 그 자리에서 승인 카드가 뜨고, 사용자가 [허용]을 눌러야 실행된다. 결과(허용·거부)를 보고 reply에 무엇을 했는지(또는 거부돼서 안 했는지) 한 줄로 말한다.`;

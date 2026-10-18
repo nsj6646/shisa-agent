@@ -3,8 +3,8 @@
 //
 //   - 만들기: 데몬이 ~/.cy-agent/worktrees/<레포>-a<id> 에 `git worktree add -b cy/agent-<설명>-<id> <경로> HEAD`(git-mutex 로 짧게 줄 세움)
 //   - 서브에이전트: Agent 입력의 isolation 은 떼고, 지시 앞에 「이 워크트리에서만 일해라」를 붙인다(SDK 가 따로 워크트리를 만들지 않게)
-//   - 끝나면(PostToolUse · 백그라운드 run 끝): 바뀐 게 있으면 데몬이 그 브랜치에 커밋해 두고 워크트리를 남긴다(worktree-keep.ts 규칙 —
-//     세션 창에 경로 줄), 바뀐 게 없으면 워크트리·브랜치를 지운다. 부른 쪽에는 경로·브랜치·커밋과 가져가는 법을 돌려준다
+//   - 끝나면(PostToolUse · 백그라운드 run 끝): 바뀐 게 있으면 커밋하지 않고 그 워크트리에 미커밋 변경으로 남긴다(worktree-keep.ts 규칙 —
+//     세션 창에 경로 줄), 바뀐 게 없으면 워크트리·브랜치를 지운다. 부른 쪽에는 경로·브랜치·변경과 가져가는 법을 돌려준다
 //   - 쓰기 잠금(repo-lock.ts)은 체크아웃(작업 폴더)마다라 워크트리가 다르면 서로 막지 않는다
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
@@ -17,7 +17,7 @@ import { cleanupWorktree } from "./worktree-keep.ts";
 import type { RunEventInput } from "./runs.ts";
 
 export type AgentWorktree = { wt: string; branch: string; base: string; source: string; label: string };
-export type AgentWorktreeDone = { kept: boolean; commit?: string; files: number; error?: string };
+export type AgentWorktreeDone = { kept: boolean; files: number; error?: string }; // 커밋 없음 — kept 면 미커밋 변경이 남아 있다
 export type GitAuthor = { name: string; email: string };
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "agent";
@@ -48,28 +48,20 @@ export async function addAgentWorktree(source: string, o: { label: string; id?: 
   return { wt, branch, base, source: top, label: o.label };
 }
 
-// 끝: 바뀐 게 있으면 커밋(작성자 고정)하고 남긴다, 없으면 워크트리·브랜치를 지운다. 확인이 안 되면 안전하게 남긴다
-export async function finishAgentWorktree(w: AgentWorktree, o: { author: GitAuthor; log?: (ev: RunEventInput) => void; parent?: string }): Promise<AgentWorktreeDone> {
-  const env = { GIT_AUTHOR_NAME: o.author.name, GIT_AUTHOR_EMAIL: o.author.email, GIT_COMMITTER_NAME: o.author.name, GIT_COMMITTER_EMAIL: o.author.email };
+// 끝: 바뀐 게 있으면 커밋하지 않고 미커밋으로 남긴다, 없으면 워크트리·브랜치를 지운다. 확인이 안 되면 안전하게 남긴다
+// (일반 작업의 변경을 정리·하위 작업 경로에서 몰래 커밋하거나 푸시하지 않는다)
+export async function finishAgentWorktree(w: AgentWorktree, o: { author?: GitAuthor; log?: (ev: RunEventInput) => void; parent?: string }): Promise<AgentWorktreeDone> {
   const log = (ev: RunEventInput) => { try { o.log?.(o.parent ? { ...ev, parent: o.parent } : ev); } catch {} };
   try {
     const files = (await shAsync("git", ["status", "--porcelain", "--untracked-files=all"], w.wt)).split("\n").filter(Boolean).length;
-    if (files) {
-      await shAsync("git", ["add", "-A"], w.wt);
-      await shAsync("git", ["commit", "-q", "--no-verify", "-m", `에이전트 작업: ${w.label}`.slice(0, 200)], w.wt, env);
-    }
-    const ahead = Number(await shAsync("git", ["rev-list", "--count", `${w.base}..HEAD`], w.wt)) || 0;
-    if (!ahead) {
-      await repoGit(w.source, async () => {
-        cleanupWorktree(w.source, w.wt, { shipped: true });
-        try { await shAsync("git", ["branch", "-D", w.branch], w.source); } catch {}
-      });
-      log({ type: "system", text: `🌿 워크트리 ${w.branch} — 바뀐 게 없어 지웠어요` });
-      return { kept: false, files: 0 };
-    }
-    const commit = await shAsync("git", ["rev-parse", "--short", "HEAD"], w.wt);
-    log({ type: "system", text: `🌿 워크트리를 남겼어요(브랜치 ${w.branch}, 커밋 ${commit}): ${w.wt}`, worktree: w.wt });
-    return { kept: true, commit, files };
+    let kept = false;
+    await repoGit(w.source, async () => {
+      // dirty·미푸시 커밋·상태 확인 실패면 남긴다(worktree-keep.ts). 남긴 게 없을 때만 워크트리·브랜치를 지운다
+      kept = cleanupWorktree(w.source, w.wt, { run: { log }, shipped: false });
+      if (!kept) { try { await shAsync("git", ["branch", "-D", w.branch], w.source); } catch {} }
+    });
+    if (!kept) { log({ type: "system", text: `🌿 워크트리 ${w.branch} — 바뀐 게 없어 지웠어요` }); return { kept: false, files: 0 }; }
+    return { kept: true, files }; // 남긴 안내는 cleanupWorktree 가 📁 줄로 남긴다
   } catch (e: any) {
     const error = String(e?.stderr || e?.message || e).split("\n")[0].slice(0, 200);
     log({ type: "system", text: `🌿 워크트리 정리 중 오류라 남겨 뒀어요(${error}): ${w.wt}`, worktree: w.wt });
@@ -83,7 +75,7 @@ export function isolatedPrompt(w: AgentWorktree, prompt: string): string {
     `[워크트리 격리] 너만의 git 워크트리에서 일한다: ${w.wt}`,
     `(브랜치 ${w.branch} · 기준 ${w.source} 의 HEAD ${w.base.slice(0, 7)}). 다른 에이전트가 같은 레포를 동시에 고치고 있을 수 있다.`,
     `- 파일 읽기·쓰기는 이 경로 아래 절대경로로, 셸 명령은 \`cd ${w.wt} && …\` 로 한다. 원래 폴더(${w.source})는 건드리지 않는다.`,
-    `- 커밋·푸시는 하지 않는다 — 끝나면 데몬이 이 워크트리의 변경을 브랜치 ${w.branch} 에 커밋해 두고(바뀐 게 없으면 지운다), 부른 쪽이 가져간다.`,
+    `- 커밋·푸시는 하지 않는다 — 끝나면 이 워크트리에 변경을 미커밋으로 그대로 남긴다(바뀐 게 없으면 지운다). 부른 쪽이 확인해 가져간다.`,
     "- 마지막 답에 바꾼 파일과 결과(테스트 포함)를 요약한다.",
     "",
     prompt,
@@ -113,10 +105,10 @@ export function worktreeSummary(items: { title: string; branch?: string }[]): st
 // 부른 쪽에 돌려줄 글(결과 뒤에 붙는다)
 export function worktreeNote(w: AgentWorktree, d: AgentWorktreeDone): string {
   if (!d.kept) return `🌿 워크트리 ${w.branch}: 바뀐 파일이 없어 지웠어요.`;
-  if (!d.commit) return `🌿 워크트리 ${w.wt} (브랜치 ${w.branch}) 정리 중 오류라 그대로 남겨 뒀어요${d.error ? ` — ${d.error}` : ""}.`;
+  if (d.files < 0) return `🌿 워크트리 ${w.wt} (브랜치 ${w.branch}) 상태를 확인하지 못해 그대로 남겨 뒀어요${d.error ? ` — ${d.error}` : ""}.`;
   return [
-    `🌿 워크트리 ${w.wt} — 브랜치 ${w.branch} 에 커밋 ${d.commit}(기준 ${w.base.slice(0, 7)})로 남겼어요.`,
-    `가져오려면: 이 작업 폴더에서 \`git cherry-pick -n ${w.base.slice(0, 7)}..${w.branch}\`(커밋 없이 변경만) · 따로 PR 로 내려면 proposals 하나에 「브랜치 ${w.branch} 의 변경을 cherry-pick 해서」를 계획으로.`,
+    `🌿 워크트리 ${w.wt} — 브랜치 ${w.branch} 에 미커밋 변경 ${d.files}개를 남겼어요(커밋·푸시 없음).`,
+    `가져오려면: \`git -C ${w.wt} diff\` 로 확인하고 필요한 파일만 이 작업 폴더로 옮겨 합쳐요.`,
   ].join("\n");
 }
 

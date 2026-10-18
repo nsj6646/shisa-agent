@@ -255,7 +255,7 @@ const RUN_SCRIPT = [
   { type: 'tool_result', id: 4, output: 'The file src/settings/settings.css has been updated.' },
   { type: 'tool_use', name: 'Bash', input: 'npm test -- settings', id: 5 },
   { type: 'tool_result', id: 5, output: '> notes-app@2.4.0 test\n> vitest run settings\n\n ✓ SaveButton.test.tsx (6)\n ✓ SettingsPage.test.tsx (14)\n\n Test Files  2 passed (2)\n      Tests  20 passed (20)' },
-  { type: 'assistant', text: 'QA 3건(저장 버튼 상태·토글 간격·다크모드 구분선) 반영했고 테스트 20개 통과했어요. 커밋·PR은 데몬이 올려요.' },
+  { type: 'assistant', text: 'QA 3건(저장 버튼 상태·토글 간격·다크모드 구분선) 반영했고 테스트 20개 통과했어요. 변경은 워크트리에 남겨 뒀어요 — 커밋·PR은 하지 않아요.' },
 ];
 const SEED_RUNS = [
   ['fix', '보조 텍스트 대비 4.5:1', 60 * 26, [
@@ -507,7 +507,7 @@ export async function route(req, res, url, ctx) {
     const pid = body.pid || `demo-pr${merges.size + 1}`;
     const rec = { state: 'asking', prUrl: body.link || 'https://github.com/example-team/notes-app/pull/131', title: body.title || RUN_TITLE };
     merges.set(pid, rec);
-    emit('bubble', { id: `merge:${pid}`, text: `PR 올렸어요 — '${rec.title}' 머지할까요?`, kind: 'proposal', proposalId: pid, actions: 'merge', image: 'merge', link: rec.prUrl });
+    emit('bubble', { id: `merge:${pid}`, text: `'${rec.title}' 머지할까요?`, kind: 'proposal', proposalId: pid, actions: 'merge', image: 'merge', link: rec.prUrl });
     json(res, 200, { ok: true, pid });
     return true;
   }

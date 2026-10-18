@@ -14,7 +14,7 @@ import { attentionSince, formatAttention } from "./ingest/slack.ts";
 import { recordFeedback, rememberFact, extractRememberedFact, applyMemoryOps, listFacts, forgetFact, factId } from "./profile.ts";
 import { think as realThink, type Thought } from "./brain.ts";
 import { briefingMilestone, briefingTask, readySources, type SourceId } from "./briefing-sources.ts";
-import { runFix as realRunFix, mergePr as realMergePr, normalizeBase, resolveRepo, type FixResult } from "./fixer.ts";
+import { runFix as realRunFix, mergePr as realMergePr, normalizeBase, resolveRepo, localDoneLine, type FixResult } from "./fixer.ts";
 import { Chat, converse as realConverse, todoThreadFor, unfinishedLine, RESTART_WHY, type Converse, type RunCommand, type SendOpts, type Sent } from "./chat.ts";
 import type { SlashCommands } from "./commands.ts";
 import type { Thread, ThreadKind, ChatPick } from "./store.ts";
@@ -614,8 +614,8 @@ export class Agent {
   }
 
   // threadId: 채팅 대화에서 나온 제안(수정 run 의 원래 화면)
-  // start: 묻지 않고 바로 실행(채팅에서 시킨 작업) — 승인 버튼·"할까요?" 말풍선 없이 곧장 수정 큐로. PR 까지 올리고 머지만 묻는다
-  // pr.base: PR 대상 브랜치(없으면 레포 기본 브랜치). 그 브랜치가 origin 에 없으면 수정 run 이 실패로 알린다
+  // start: 묻지 않고 바로 실행(채팅에서 시킨 작업) — 승인 버튼·"할까요?" 말풍선 없이 곧장 수정 큐로. 끝나면 로컬 변경·테스트 결과만 보여 준다
+  // pr.base: 작업 기준 브랜치(없으면 레포 기본 브랜치). origin 에 없으면 로컬 브랜치로, 둘 다 없으면 수정 run 이 실패로 알린다
   async propose(pr: { repo: string; title: string; plan: string; base?: string }, threadTs?: string, explicit = false, threadId?: string, start = false): Promise<Proposal | undefined> {
     try { resolveRepo(this.cfg, pr.repo); } catch { return undefined; } // 허용 밖 레포 제안은 버린다
     const id = randomUUID().replace(/-/g, "").slice(0, 16);
@@ -624,7 +624,7 @@ export class Agent {
     const p = this.store.proposal(id)!;
     this.changed();
     if (start) {
-      const ack = `▶️ *채팅에서 시킨 작업* — 바로 시작해요${base ? ` (PR 대상 \`${base}\`)` : ""}. 머지는 끝나고 물어볼게요`;
+      const ack = `▶️ *채팅에서 시킨 작업* — 바로 시작해요${base ? ` (기준 \`${base}\`)` : ""}. 끝나면 로컬 변경·테스트 결과를 보여 드릴게요 — 커밋·푸시·PR 은 하지 않아요`;
       const posted = await this.slack?.post(resolvedBlocks({ blocks: proposalBlocks(p, true) }, ack), `요청 작업: ${pr.title}`, threadTs);
       if (posted) this.store.setProposalSlack(id, posted.channel, posted.ts);
       await this.approve(id, true);
@@ -690,22 +690,13 @@ ${meetingsContext(this.store)}`,
       const r = await this.deps.runFix(this.cfg, p, (s) => { steps.push(s); flush(); prog?.onStep(s); });
       if (trace) await this.slack?.update(trace.channel, trace.ts, traceBlocks(steps, true, r.ok), "작업 내역");
       if (r.ok) {
-        this.store.transition(p.id, ["running"], "done", r.prUrl ?? r.branch);
-        if (r.prUrl) this.prs.set(p.id, r.prUrl);
-        const done = await this.slack?.post(r.prUrl ? mergeBlocks(p.id, r.prUrl, r.summary) : [{ type: "markdown", text: `✅ 푸시 완료 (\`${r.branch}\`)\n${r.summary}` }], `완료: ${p.title}`, p.slackTs);
-        if (prog) {
-          prog.progress.done(r.prUrl ? phrase("fix_pr") : phrase("fix_pushed", { branch: r.branch ?? "" }));
-          // 머지는 사용자 승인: 오버레이 ✓/✗/추가질문 + Slack 머지 버튼, 먼저 답한 쪽.
-          // 채팅에서 시킨 작업이면 그 대화에도 머지 승인 카드(같은 머지 기록 — 말풍선·Slack 과 같이 결정된다)
-          const ask = async (why?: string) => {
-            this.reactions!.offerMerge({ id: p.id, title: p.title, prUrl: r.prUrl!, summary: r.summary, branch: r.branch, ...(r.headOid ? { headOid: r.headOid } : {}),
-              tests: testsFromLog(r.log ?? steps), ...(done ? { slack: { channel: done.channel, ts: done.ts } } : {}) });
-            if (p.threadId) await this.mergeCardAfterFix(p, r.prUrl!, why);
-          };
-          // 자동 머지 레포(auto-merge.ts)면 ✓ 없이 — 검사가 끝날 때까지 기다리므로 수정 큐를 막지 않게 따로 돈다. 못 하면 위 승인으로
-          if (r.prUrl && inAutoMerge(this.cfg.autoMerge, parsePrRef(r.prUrl)?.repo)) this.track(this.autoMergeAfterFix(p, r, ask));
-          else if (r.prUrl) await ask();
-        } else this.bus.bubble({ text: phraseVoice("fix_done", { title: p.title }, `fix-done:${p.id}`), kind: "done", ttlMs: 20e3, link: r.prUrl });
+        // 일반 작업은 여기서 끝난다 — 로컬 변경·테스트 결과·보존된 워크트리만 알린다. 커밋·푸시·PR·머지 카드는 없다
+        this.store.transition(p.id, ["running"], "done", r.branch);
+        const line = localDoneLine(r);
+        await this.slack?.post([{ type: "markdown", text: line }], `완료: ${p.title}`, p.slackTs);
+        this.say(p.threadId, line); // 채팅에서 시킨 작업이면 그 대화에도 실제 한 일만 남는다
+        if (prog) prog.progress.done(phrase("fix_pushed", { branch: r.branch ?? "" }));
+        else this.bus.bubble({ text: phraseVoice("fix_done", { title: p.title }, `fix-done:${p.id}`), kind: "done", ttlMs: 20e3 });
       } else {
         this.store.transition(p.id, ["running"], "failed", r.summary);
         // 채팅에서 시킨 작업이면 그 대화에도 실패 이유(테스트 출력 끝 포함)
@@ -799,32 +790,6 @@ ${meetingsContext(this.store)}`,
     return { action, ...(fellBack ? { error: `#${st.number} 바로 머지하지 못했어요 — ${fellBack}. 머지 승인 카드를 띄웠어요` } : {}) };
   }
 
-  // 수정 run 이 자동 머지 레포에 올린 PR: 검사가 끝날 때까지 기다렸다가 ✓ 없이 머지. 못 하면 ask(이유) — 예전 머지 승인
-  private async autoMergeAfterFix(p: Proposal, r: FixResult, ask: (why?: string) => Promise<void>) {
-    const url = r.prUrl!;
-    const ref = parsePrRef(url)!;
-    this.say(p.threadId, `🔀 "${p.title}" PR을 올렸어요 — ${ref.repo} 은(는) 자동 머지 레포라 검사가 끝나면 ✓ 없이 머지할게요. ${url}`);
-    const s = await settlePr(this.deps.prStatus, ref, undefined, this.deps.autoMergePoll ?? { tries: 40, ms: 15e3 }, this.deps.sleep ?? ((ms) => new Promise((ok) => setTimeout(ok, ms))));
-    let why = s.pr ? readyBlock(s.pr) : s.error;
-    if (!why && s.pr && !inAutoMerge(this.cfg.autoMerge, s.pr.repo)) why = "그 사이 자동 머지 레포에서 빠졌어요";
-    if (!why && s.pr && this.reactions) {
-      const st = s.pr;
-      const out = await this.reactions.mergeNow({ id: p.id, title: p.title, prUrl: st.url, pr: infoOf(st), branch: st.head, summary: r.summary, ...(p.threadId ? { threadId: p.threadId } : {}) }, "auto");
-      if (out.ok) { this.say(p.threadId, mergedLine(st, this.reactions.merge(p.id)?.commitUrl, "auto")); return; }
-      why = out.error;
-    }
-    console.warn(`[merge] 자동 머지 안 함 ${url}: ${why}`);
-    await ask(why ?? "알 수 없는 이유");
-  }
-
-  // 자동 머지 작업(수정 run 뒤 — 검사를 기다린다). 테스트가 끝나길 기다릴 수 있게 모아 둔다
-  private autoJobs = new Set<Promise<unknown>>();
-  private track(job: Promise<unknown>) {
-    const j: Promise<unknown> = job.catch((e) => console.warn("[merge] 자동 머지 오류:", e?.message ?? e)).finally(() => this.autoJobs.delete(j));
-    this.autoJobs.add(j);
-  }
-  async autoMergeIdle(): Promise<void> { while (this.autoJobs.size) await Promise.all([...this.autoJobs]); }
-
   private say(threadId: string | undefined, text: string) {
     if (!threadId || !this.store.thread(threadId)) return;
     this.store.addChat("assistant", text, undefined, undefined, threadId);
@@ -856,20 +821,6 @@ ${meetingsContext(this.store)}`,
     if (op === "add" ? has : !has) return { ok: true as const, changed: false, list: cur };
     this.cfg.autoMerge = op === "add" ? [...cur, slug] : cur.filter((x) => x.toLowerCase() !== slug.toLowerCase());
     return { ok: true as const, changed: true, list: this.cfg.autoMerge };
-  }
-
-  // 채팅에서 시킨 수정 run 이 PR 까지 가면: 그 대화에 답 한 줄 + 머지 승인 카드(같은 제안 id 의 머지 기록)
-  // why: 자동 머지 레포인데 ✓ 없이 못 한 이유(답 한 줄에)
-  private async mergeCardAfterFix(p: Proposal, prUrl: string, why?: string) {
-    try {
-      const r = await this.requestMerge({ pr: prUrl }, { via: "chat", threadId: p.threadId, id: p.id, title: p.title });
-      if (!r.action || !p.threadId || !this.store.thread(p.threadId)) return;
-      const n = this.store.addChat("assistant", `"${p.title}" PR을 올렸어요 — ${why ? `자동 머지는 못 했어요(${why}). ` : ""}머지 승인 카드를 띄웠어요. ✓ 를 누르면 머지해요.`, undefined, undefined, p.threadId);
-      this.actions.attach(r.action.id, n);
-      this.bus.threads({ thread: this.store.thread(p.threadId) });
-    } catch (e: any) {
-      console.warn("[merge] 대화에 머지 카드를 못 띄움:", e?.message ?? e);
-    }
   }
 
   // 머지 승인(오버레이 ✓/✗). Slack 버튼은 merge(). 같은 상태 기계라 먼저 답한 쪽이 이긴다

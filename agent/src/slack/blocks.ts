@@ -180,7 +180,7 @@ export function revertedAutoLine(blocks: Block[], blockId: string, ack: string):
 export function proposalBlocks(p: Proposal, explicit = false): Block[] {
   const head = explicit ? "🛠️ *요청 받은 작업*" : "💡 *UI 수정 제안*";
   return [
-    { type: "section", text: { type: "mrkdwn", text: `${head}  ${escapeMrkdwn(p.title)}\n\`${p.repo}\`${p.base ? ` → PR 대상 \`${p.base}\`` : ""}` } },
+    { type: "section", text: { type: "mrkdwn", text: `${head}  ${escapeMrkdwn(p.title)}\n\`${p.repo}\`${p.base ? ` → 기준 \`${p.base}\`` : ""}` } },
     ...splitText(p.plan, SECTION_LIMIT).map((t) => ({ type: "section", text: { type: "mrkdwn", text: t } })),
     {
       type: "actions",

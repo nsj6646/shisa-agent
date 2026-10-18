@@ -66,6 +66,7 @@ export type BackgroundAgentSink = (req: { toolUseId: string; input: Record<strin
 export const HARD_DENY: readonly { id: string; what: string }[] = [
   { id: "git-write", what: "git commit · push · merge — cy-agent 워크트리(~/.cy-agent/worktrees · 레포의 .claude/worktrees)나 cy/ 브랜치 밖에서, 또는 기본·보호 브랜치(main·master·develop·origin 기본 브랜치)에서 · 그리로 푸시 · force push · --delete/--mirror/--all 푸시 · 명령 치환·sh -c 안의 git 쓰기" },
   { id: "gh-merge", what: "gh pr merge · gh api …/merge (대신 답의 merges — 사용자가 말로 시켰거나 자동 머지 레포면 데몬이 검사 뒤 바로 머지, 아니면 그 대화에 머지 승인 카드. 채팅·캐릭터 대화에서 시도하면 데몬이 받아 카드로 띄운다)" },
+  { id: "gh-create", what: "gh pr create · gh api …/pulls 쓰기 — PR 은 만들지 않는다(정책). 변경은 워크트리에 미커밋으로 남아 사용자가 검토한 뒤 직접 올린다. 승인·자동 머지로도 풀리지 않는다" },
   { id: "rm-rf", what: "rm -rf 로 / · ~ · 허용 루트(repoRoots)와 ~/.cy-agent/brain 밖을 지우기" },
   { id: "cy-config", what: "~/.cy-agent/config.json(토큰) · cy.db(데몬 상태) 읽기·쓰기" },
   { id: "claude-creds", what: "~/.claude* (Claude 설정·자격 증명) 읽기·쓰기" },
@@ -468,7 +469,34 @@ function headThenTail(s: string, head: RegExp, tail: RegExp): boolean {
   }
   return false;
 }
-const GH_MERGE = { test: (s: string) => /\bgh\s+pr\s+merge\b/.test(s) || headThenTail(s, /\bgh\s+api\b/, /\/pulls\/\d+\/merge\b/) };
+// gh 낱말(따옴표·경로·.exe·-R 값)을 건너뛰고 하위 명령이 what 인가 — `gh -R o/r pr create` · `"gh" pr create` 같은 비켜 가기를 막는다
+const GH_OPT_VAL = new Set(["-R", "--repo", "--hostname"]);
+export function ghSub(cmd: string, what: readonly string[]): boolean {
+  for (const seg of shellSegments(cmd)) {
+    const w = shellWordsNorm(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+    let at = 0;
+    while (at < w.length && SEG_PREFIX.includes(w[at])) at++;
+    const bin = basename(w[at] ?? "").toLowerCase().replace(/\.exe$/, "");
+    if (bin !== "gh") continue;
+    let i = at + 1;
+    for (; i < w.length && w[i].startsWith("-"); i++) if (GH_OPT_VAL.has(w[i])) i++;
+    const sub = `${(w[i] ?? "").toLowerCase()} ${(w[i + 1] ?? "").toLowerCase()}`.trim();
+    if (what.some((x) => sub === x || sub.startsWith(`${x} `))) return true;
+  }
+  return false;
+}
+// gh api 로 pulls 에 쓰기(POST·-f/--field). 목록 조회 같은 읽기는 막지 않는다
+function ghApiPrWrite(s: string): boolean {
+  if (!/\bgh\s+api\b/.test(s) || !/\/pulls(?:[/\s'"?]|$)/.test(s)) return false;
+  return /(?:-X|--method)[=\s]*['"]?POST\b/i.test(s) || /(?:^|\s)(?:-f|--field|--raw-field|--input)\b/.test(s);
+}
+const GH_MERGE = { test: (s: string) => /\bgh\s+pr\s+merge\b/.test(s) || ghSub(s, ["pr merge"]) || headThenTail(s, /\bgh\s+api\b/, /\/pulls\/\d+\/merge\b/) };
+// PR 생성(하드 차단): gh pr create, 또는 gh api 로 pulls 에 쓰기. 읽기는 막지 않는다
+const GH_CREATE = { test: (s: string) => /\bgh\s+pr\s+create\b/.test(s) || ghSub(s, ["pr create"]) || ghApiPrWrite(s) };
+// fixer.ts(수정 run 의 noShip 훅)도 같은 판정을 쓴다
+export const prCreateBlocked = (cmd: string) => GH_CREATE.test(cmd);
+// 하드 차단된 PR 생성: 모델이 "여기선 막혔으니 대신..." 으로 끝내지 않게 무엇을 해야 하는지까지 알려 준다
+export const GH_CREATE_WHY = "PR 생성은 이 앱에서 하지 않아요(정책) — 승인·자동 머지로도 풀리지 않는다. 변경은 워크트리에 미커밋으로 남아 있으니 사용자가 검토한 뒤 직접 올린다. 답에는 PR 을 올렸다고 쓰지 말고 보존된 워크트리 경로·바뀐 파일·테스트 결과만 말한다";
 // 하드 차단된 gh pr merge: 모델이 "여기선 막혔으니 GitHub에서 누르세요"로 끝내지 않게 무엇을 해야 하는지까지 알려 준다
 export const GH_MERGE_WHY = "gh pr merge — 대화에서 gh 로 직접 머지하지 않는다. 대신 답의 merges 에 그 PR(링크 또는 owner/repo#번호)을 넣어라 — 사용자가 이번 말로 직접 시켰으면 userSaid: true(데몬이 사용자 말과 검사를 확인하고 바로 머지), 아니면 데몬이 이 대화에 머지 승인 카드(검사·충돌·리뷰 + ✓/✗)와 캐릭터 말풍선을 띄우고 사용자가 ✓ 를 눌러야 머지된다. reply_md 는 짧게, GitHub·다른 화면에서 누르라고 안내하지 않는다";
 // 글 판정(첫 거름): git · GIT · git.exe · 경로/git.exe 다음 옵션들 뒤 push|merge|commit. 따옴표·역슬래시를 걷은 글(normShell)로도 본다
@@ -748,6 +776,7 @@ export function hardDeny(toolName: string, input: unknown, c: PermCtx): Verdict 
     const api = daemonApiWhy(cmd, c.port);
     if (api) return no(api);
     if (GH_MERGE.test(cmd)) return no(GH_MERGE_WHY);
+    if (GH_CREATE.test(cmd)) return no(GH_CREATE_WHY);
     const git = gitWriteWhy(cmd, c);
     if (git) return no(git);
     for (const seg of cmd.split(SEGMENTS)) {

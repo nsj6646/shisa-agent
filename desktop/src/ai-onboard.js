@@ -479,8 +479,8 @@ function slackSteps(agent) {
   ];
 }
 
-// 시사 데몬은 코드를 고친 뒤 gh(GitHub 공식 명령 도구)로 변경 요청(PR)을 만들고, 승인하면 머지한다.
-// (agent/src/fixer.ts 의 gh pr create · gh pr merge, reactions.ts 의 gh pr view)
+// 시사는 코드 작업의 변경을 워크트리에 남기고 PR은 만들지 않는다. 기존 PR 확인·머지(채팅 머지 요청·자동 머지)에
+// gh(GitHub 공식 명령 도구)를 쓴다(reactions.ts 의 gh pr view · gh pr merge, gh.ts 의 읽기 도구).
 // gh 로그인이 필요한지는 코드로 직접 확인되지 않았다. 그래서 '로그인해 두면 쓸 수 있다'까지만 안내한다.
 function githubSteps(agent) {
   if (agent !== 'claude' && agent !== 'codex') {
@@ -500,7 +500,7 @@ function githubSteps(agent) {
     {
       id: 'github-install',
       title: 'GitHub 도구(gh)를 설치하세요',
-      identity: '시사가 고친 코드를 GitHub에 올릴 때 이 프로그램을 씁니다.',
+      identity: '시사가 기존 PR을 보고 머지할 때 이 프로그램을 씁니다.',
       rows: [
         PASTE_ENTER('터미널에 아래 명령'),
         WIN ? '**이미 설치되어 있다**는 글이 나오면 바로 **다음**을 누릅니다.' : '글자 한 줄로 **gh 의 위치**가 나오면 이미 설치된 것입니다. 바로 **다음**을 누릅니다.',
@@ -531,7 +531,7 @@ function githubSteps(agent) {
       details: [
         '브라우저가 안 열리면 터미널에 나온 주소를 복사해 크롬에 붙이세요.',
         '회사 GitHub 조직의 코드를 쓴다면, 브라우저에서 그 조직을 **승인**하라고 할 수 있습니다. 안내대로 하고, 안 되면 조직 관리자에게 물어보세요.',
-        '**Authenticate Git** 질문에 Y 를 고르면, 시사가 코드를 GitHub에 올릴 때 같은 로그인을 쓰게 해 줍니다.',
+        '**Authenticate Git** 질문에 Y 를 고르면, 시사가 PR 상태를 보고 머지할 때 같은 로그인을 쓰게 해 줍니다.',
       ],
       codeLabel: '터미널에 붙여 넣기',
       code: 'gh auth login',

@@ -299,25 +299,23 @@ test("레포 안에서 번호만으로 막힌 시도(cwd): 그 레포 폴더로 
   assert.equal(s.agent.listActions().filter((a) => a.type === MERGE_TYPE).length, 1);
 });
 
-test("채팅에서 시킨 수정 작업이 PR 까지 가면 그 대화에 답 한 줄 + 머지 승인 카드", async () => {
+test("채팅에서 시킨 수정 작업은 로컬에서 끝나고 그 대화에도 실제 한 일만 남는다(PR·머지 카드 없음)", async () => {
   let s!: ReturnType<typeof setup>;
   s = setup({
     converse: async () => ({ reply_md: "작업 시작했어요", bubble: "", show: null, proposals: [{ repo: s.root, title: "다크모드", plan: "토글" }], todo_ops: [], rule: null, merges: [] }),
-    runFix: async () => ({ ok: true, summary: "바꿈", prUrl: URL268, branch: "cy/b", log: [] }),
+    runFix: async () => ({ ok: true, summary: "바꿈", branch: "cy/b", worktree: "/w/cy-b", files: 2, testsRan: ["npm test"], log: [] }),
   });
   execFileSync("git", ["init", "-q", s.root]); // 수정 run 은 레포 안에서만(진짜 수정은 가짜 runFix)
   const sent = s.agent.chat("다크모드 넣어줘") as { threadId: string };
   await s.agent.chatIdle();
   await s.agent.fixIdle();
-  const cards = s.agent.listActions({ threadId: sent.threadId }).filter((a) => a.type === MERGE_TYPE);
-  assert.equal(cards.length, 1);
   const msgs = s.agent.threadMessages(sent.threadId)!.messages;
-  const line = msgs.find((m) => /PR을 올렸어요 — 머지 승인 카드를 띄웠어요/.test(m.text))!;
-  assert.equal(cards[0].msgN, line.n);
-  const bub = s.bubbles.filter((b) => b.actions === "merge").at(-1);
-  assert.equal(bub.text, "#268 머지할까요? 검사 통과·충돌 없음");
-  // 머지 기록은 제안 id 하나(말풍선 ✓ 와 카드 ✓ 가 같은 것)
-  assert.equal(bub.proposalId, JSON.parse((s.store.db.prepare("SELECT payload FROM pending_actions WHERE id = ?").get(cards[0].id) as any).payload).mergeId);
+  const line = msgs.find((m) => /로컬 변경 완료 — 커밋·푸시·PR 없음/.test(m.text))!;
+  assert.match(line.text, /보존된 워크트리: `\/w\/cy-b`/);
+  assert.match(line.text, /바뀐 파일 2개 · 테스트: npm test/);
+  assert.equal(msgs.some((m) => /PR을 올렸어요/.test(m.text)), false);
+  assert.equal(s.agent.listActions({ threadId: sent.threadId }).filter((a) => a.type === MERGE_TYPE).length, 0);
+  assert.equal(s.bubbles.some((b) => b.actions === "merge"), false);
   assert.deepEqual(s.merged, []);
 });
 

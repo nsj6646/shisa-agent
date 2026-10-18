@@ -1,5 +1,5 @@
-// 승인된 수정을 실행한다: 워크트리 → 선택한 코딩 실행기가 수정 → 테스트 → 커밋·푸시 → PR.
-// 커밋·푸시·머지는 에이전트가 아니라 이 코드가 한다(작성자·브랜치를 결정적으로 고정).
+// 승인된 수정을 실행한다: 워크트리 → 선택한 코딩 실행기가 수정 → 테스트 → 로컬 결과 표시.
+// 일반 작업은 커밋·푸시·PR 을 하지 않는다 — 변경은 워크트리에 그대로 남겨 사용자가 먼저 검토한다(작성자·브랜치를 고정하던 커밋 단계 없음).
 // 수정 run 은 여러 개가 동시에 돈다(각자 워크트리). 같은 레포의 공유 참조를 바꾸는 git(fetch·worktree add/remove·branch -D·push)만
 // git-mutex.ts 로 짧게 줄 세우고, 테스트·네트워크 명령은 비동기라 데몬(다른 run·채팅)을 멈추지 않는다.
 // 수정 run 안의 서브에이전트는 isolation: "worktree" 로 각자 워크트리를 하나씩 팔 수 있다(agent-worktrees.ts)
@@ -21,13 +21,14 @@ import { cleanupWorktree } from "./worktree-keep.ts";
 import { repoGit, shAsync } from "./git-mutex.ts";
 import { WorktreeIsolation } from "./agent-worktrees.ts";
 import { IS_WIN, pathWithin, spawnSpec, type Plat, type SpawnSpec } from "./plat.ts";
-import { configSetsAlias, isGitName, shellSegments, shellWordsNorm, shellWrapper, substsOf } from "./permissions.ts";
+import { configSetsAlias, ghSub, isGitName, prCreateBlocked, shellSegments, shellWordsNorm, shellWrapper, substsOf } from "./permissions.ts";
 
 export type FixResult = {
-  ok: boolean; summary: string; prUrl?: string; branch?: string; log: string[];
-  headOid?: string;    // 푸시한 커밋 — 머지 승인은 이 커밋에만(core → mergePr --match-head-commit)
+  ok: boolean; summary: string; branch?: string; log: string[];
+  worktree?: string;   // 변경(미커밋)이 남아 있는 워크트리 경로 — 완료 화면이 사용자에게 보여 준다
+  files?: number;      // 바뀐 파일 수(추적 안 된 것 포함)
   runId?: string;      // 이 수정 run(세션 창)
-  testsRan?: string[]; // 통과한 테스트(FixDeps.testCommands 의 label — 하나라도 실패하면 커밋 안 하고 ok:false)
+  testsRan?: string[]; // 실제로 통과한 테스트(FixDeps.testCommands 의 label — 하나라도 실패하면 ok:false). 비면 테스트를 돌리지 않았다
 };
 // 커밋 전에 돌릴 테스트 하나. dir = 워크트리 안 상대 경로
 export type TestCommand = { label: string; cmd: string[]; dir: string };
@@ -103,7 +104,7 @@ const GIT_OPT_VAL = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespac
 const GH_OPT_VAL = new Set(["-R", "--repo", "--hostname"]);
 const binOf = (w: string) => basename(w.replace(/\\/g, "/")).toLowerCase().replace(/\.exe$/, "");
 function shipBlocked(cmd: string): boolean {
-  if (BLOCKED_BASH.test(cmd)) return true;
+  if (BLOCKED_BASH.test(cmd) || prCreateBlocked(cmd) || ghSub(cmd, ["pr create", "pr merge"])) return true;
   // sh -c · eval · xargs · 명령 치환 안의 git·gh 는 안을 확인할 수 없다 — 배포 동작 낱말이 같이 있으면 막는다
   if (/\b(git|gh)\b/i.test(cmd) && SHIP_WORDS.test(cmd) && (shellWrapper(cmd) || substsOf(cmd).some((x) => /\b(git|gh)\b/i.test(x)))) return true;
   for (const seg of shellSegments(cmd)) {
@@ -133,7 +134,7 @@ export const noShipHook: HookCallback = async (input) => {
   if (input.hook_event_name !== "PreToolUse" || input.tool_name !== "Bash") return {};
   const cmd = String((input.tool_input as any)?.command ?? "");
   return shipBlocked(cmd)
-    ? { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "커밋·푸시·머지는 cy-agent가 직접 한다. 파일 수정과 테스트까지만 해." } }
+    ? { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "커밋·푸시·머지·PR 생성은 하지 않는다. 파일 수정과 테스트까지만 해 — 변경은 워크트리에 미커밋으로 남긴다." } }
     : {};
 };
 export const isBlockedBash = (cmd: string) => shipBlocked(cmd);
@@ -141,10 +142,9 @@ export const isBlockedBash = (cmd: string) => shipBlocked(cmd);
 const FIX_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "commit_message", "tests_ran", "tests_passed"],
+  required: ["summary", "tests_ran", "tests_passed"],
   properties: {
-    summary: { type: "string", description: "무엇을 바꿨는지 2~4줄(한국어)" },
-    commit_message: { type: "string", description: "conventional commit 한 줄 제목 + 빈 줄 + 본문(한국어)" },
+    summary: { type: "string", description: "무엇을 바꿨는지 2~4줄(한국어). 커밋 메시지는 쓰지 않는다" },
     tests_ran: { type: "string", description: "실행한 테스트 명령. 없으면 빈 문자열" },
     tests_passed: { type: "boolean", description: "내 변경이 깨뜨린 테스트가 없으면 true. 바꾸기 전부터 깨져 있던 것(기본 브랜치에서도 같은 오류 — 실행 자체가 안 되는 lint 설정 등)은 실패로 치지 않고 summary 에 적는다" },
   },
@@ -158,20 +158,14 @@ export type FixDeps = {
   awaitAfterInterruptMs?: number; // 중단 뒤 사용자 메시지를 기다리는 시간(지나면 정지)
   // 이어서 하기: 이전 SDK 세션을 그 워크트리 경로에서 다시 열 수 있나(기본 getSessionInfo). 테스트는 가짜
   sessionExists?: (sessionId: string, cwd: string) => Promise<boolean>;
-  // PR 상태(기본 gh pr view). 모르면 undefined
-  prState?: (prUrlOrBranch: string, cwd: string) => { state: string; url?: string } | undefined | Promise<{ state: string; url?: string } | undefined>;
-  // PR 만들기(기본 gh). 테스트는 가짜 — 인자(--base 등)를 확인한다
-  gh?: (args: string[], cwd: string) => string | Promise<string>;
-  // ── 특별한 수정 run 용(레포 안내·정해진 테스트 등). 없으면 예전 그대로 ──
+    // ── 특별한 수정 run 용(레포 안내·정해진 테스트 등). 없으면 예전 그대로 ──
   promptPrefix?: string;                                  // 수정 프롬프트 앞에 붙일 레포 안내
-  testCommands?: TestCommand[];                           // 커밋 전 테스트(감지 대신). 하나라도 실패하면 커밋 안 함
+  testCommands?: TestCommand[];                           // 마무리 전 테스트(감지 대신). 하나라도 실패하면 ok:false
   coders?: () => CoderAvail;                              // 코드 작업 AI 고르기에 쓸 준비 상태(없으면 coding.ts coderAvail)
   runTest?: (cmd: string[], cwd: string) => Promise<unknown>; // 테스트 한 번(기본 사용자 로그인 셸 — 모델 Bash 와 같은 PATH·node). 테스트는 가짜
   prepareWorktree?: (wt: string, repo: string) => void;   // 워크트리를 만든 직후(의존성 링크 등)
-  beforeCommit?: (wt: string) => { block?: string; warn?: string } | undefined; // 커밋 직전 검사 — block 이면 커밋 안 하고 실패
+  beforeFinish?: (wt: string) => { block?: string; warn?: string } | undefined; // 마무리(테스트) 직전 검사 — block 이면 실패
   hooks?: (wt: string) => HookCallback[];                 // PreToolUse 훅 더하기(noShip·서브에이전트 가드 뒤)
-  trailer?: string;                                       // 커밋 메시지 끝에 더 붙일 줄(Co-Authored-By 등)
-  prNote?: string;                                        // PR 본문 끝 줄(기본 "머지는 사용자 승인 뒤")
   onRun?: (runId: string) => void;                        // run 을 만들자마자(세션 창·카드 연결)
 };
 
@@ -213,7 +207,7 @@ export class InputQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
-const RULES = `규칙:\n- 요청된 범위만 최소로 바꾼다. 주변 리팩터링 금지.\n- 필요하면 의존성을 설치하고 프로젝트 테스트(있다면 lint/typecheck도)를 돌려 통과시킨다.\n- 테스트·lint 가 실패하면 오류 내용을 보고 바꾸기 전(기본 브랜치)에도 나는 오류인지 판단한다(git stash 는 쓰지 않는다). 원래부터 깨져 있던 것(설정 문제로 실행 자체가 안 되는 lint 등)이면 고치지 말고 tests_passed: true 로, summary 에 "기존 문제"라고 적는다. 내 변경이 깨뜨린 것만 실패다.\n- git commit/push는 하지 마라. 끝나면 결과를 구조화 출력으로 보고해.\n- 작업 중 사용자가 메시지를 보내면 그 지시도 반영하고, 마지막에 다시 구조화 출력으로 보고해.`;
+const RULES = `규칙:\n- 요청된 범위만 최소로 바꾼다. 주변 리팩터링 금지.\n- 필요하면 의존성을 설치하고 프로젝트 테스트(있다면 lint/typecheck도)를 돌려 통과시킨다.\n- 테스트·lint 가 실패하면 오류 내용을 보고 바꾸기 전(기본 브랜치)에도 나는 오류인지 판단한다(git stash 는 쓰지 않는다). 원래부터 깨져 있던 것(설정 문제로 실행 자체가 안 되는 lint 등)이면 고치지 말고 tests_passed: true 로, summary 에 "기존 문제"라고 적는다. 내 변경이 깨뜨린 것만 실패다.\n- git commit/push/PR 은 하지 마라. 변경은 커밋하지 않고 워크트리에 그대로 둔다 — 사용자가 먼저 검토한다. 끝나면 결과를 구조화 출력으로 보고해.\n- 작업 중 사용자가 메시지를 보내면 그 지시도 반영하고, 마지막에 다시 구조화 출력으로 보고해.`;
 
 export function fixPrompt(p: Pick<Proposal, "title" | "plan">): string {
   return `다음 변경을 이 레포에 구현해.\n\n제목: ${p.title}\n계획:\n${p.plan}\n\n${RULES}`;
@@ -392,7 +386,7 @@ export function fixSubagentHookFor(iso?: WorktreeIsolation, cwd?: string): HookC
 export const fixSubagentHook: HookCallback = fixSubagentHookFor();
 
 // 수정 run 프롬프트 덧붙임: 독립된 일은 서브에이전트 여럿을 각자 워크트리에서 동시에
-export const FIX_FANOUT = "- 서로 독립된 하위 작업이 여럿이면 Agent 도구를 한 메시지에 여러 번 불러 동시에 돌려도 된다(개수 상한 없음). 같은 파일을 건드릴 수 있으면 isolation: \"worktree\" 로 불러 서브에이전트마다 새 워크트리(이 작업 폴더 HEAD 에서 새 브랜치)를 판다 — 끝나면 바뀐 게 있으면 그 브랜치에 커밋돼 남고(경로·브랜치·커밋이 결과 뒤에 붙는다), 없으면 지워진다. 결과는 이 작업 폴더에서 `git cherry-pick -n <기준>..<브랜치>` 로 커밋 없이 가져와 합친다(커밋·푸시는 cy-agent 가 한다).";
+export const FIX_FANOUT = "- 서로 독립된 하위 작업이 여럿이면 Agent 도구를 한 메시지에 여러 번 불러 동시에 돌려도 된다(개수 상한 없음). 같은 파일을 건드릴 수 있으면 isolation: \"worktree\" 로 불러 서브에이전트마다 새 워크트리(이 작업 폴더 HEAD 에서 새 브랜치)를 판다 — 끝나면 바뀐 게 있으면 그 워크트리에 미커밋 변경으로 남고(경로가 결과 뒤에 붙는다), 없으면 지워진다. 결과는 이 작업 폴더에서 `git -C <경로> diff` 등으로 확인해 합친다(커밋·푸시는 하지 않는다).";
 
 export function sdkOptions(cfg: Config, wt: string, extra: Record<string, unknown> = {}, more: HookCallback[] = [], iso?: WorktreeIsolation) {
   return {
@@ -442,20 +436,17 @@ async function runInUserShell(cmd: string[], cwd: string): Promise<string> {
   return shAsync(sp.file, sp.args, cwd, { CLAUDECODE: "1" }, undefined, sp.verbatim);
 }
 
-type ShipSpec = {
-  wt: string; branch: string; base: string; trailer: string; planLine: string;
-  existingPr?: string; // 열린 PR 이 있으면 푸시만(그 PR 이 갱신된다)
-};
-// 테스트 → 커밋(작성자 고정) → 같은 브랜치에 푸시 → PR(없으면 새로). 실패면 run 을 failed 로 닫는다
-async function ship(cfg: Config, s: Session, out: any, sp: ShipSpec, reg: RunRegistry, step: (s: string) => void, log: string[], deps: FixDeps): Promise<FixResult & { pushed: boolean }> {
+// 마무리: 바뀐 파일 확인 → 테스트 → 워크트리에 그대로 남긴다(커밋·푸시·PR 없음 — 사용자가 먼저 검토한다).
+// 테스트가 실패하면 ok:false 이고, 워크트리는 미커밋 변경이 남아 정리 단계에서도 지워지지 않는다
+async function finishLocal(s: Session, out: any, sp: { wt: string; branch: string }, step: (s: string) => void, log: string[], deps: FixDeps): Promise<FixResult> {
   const { run, st } = s;
   const { wt, branch } = sp;
-  const author = { GIT_AUTHOR_NAME: cfg.gitAuthor.name, GIT_AUTHOR_EMAIL: cfg.gitAuthor.email, GIT_COMMITTER_NAME: cfg.gitAuthor.name, GIT_COMMITTER_EMAIL: cfg.gitAuthor.email };
-  const fail = (summary: string) => { run.end("failed", { error: summary.split("\n")[0] }); return { ok: false, summary, branch, log, pushed: false, runId: run.id }; };
-  if (!sh("git", ["status", "--porcelain"], wt)) return fail(`바뀐 파일이 없어요.\n${out.summary}`);
-  const guard = deps.beforeCommit?.(wt);
+  const fail = (summary: string) => { run.end("failed", { error: summary.split("\n")[0] }); return { ok: false, summary, branch, worktree: wt, log, runId: run.id }; };
+  const files = (await shAsync("git", ["status", "--porcelain", "--untracked-files=all"], wt)).split("\n").filter(Boolean).length;
+  if (!files) return fail(`바뀐 파일이 없어요.\n${out.summary}`);
+  const guard = deps.beforeFinish?.(wt);
   if (guard?.warn) { step(`⚠️ ${guard.warn}`); run.log({ type: "system", text: `⚠️ ${guard.warn}` }); }
-  if (guard?.block) return fail(`${guard.block} — 커밋 안 함.`);
+  if (guard?.block) return fail(`${guard.block} — 마무리 안 함.`);
 
   const testsRan: string[] = [];
   const testCmd = deps.testCommands?.length ? undefined : detectTestCommand(wt, mainCheckout(wt));
@@ -472,7 +463,7 @@ async function ship(cfg: Config, s: Session, out: any, sp: ShipSpec, reg: RunReg
       return tail;
     }
   };
-  const failed = (label: string, tail: string) => fail(`테스트 실패(${label}) — 두 번 돌려도 실패해서 커밋 안 함.\n\`\`\`\n${tail.slice(-4000)}\n\`\`\``);
+  const failed = (label: string, tail: string) => fail(`테스트 실패(${label}) — 두 번 돌려도 실패했어요. 변경은 워크트리에 그대로 있어요.\n\`\`\`\n${tail.slice(-4000)}\n\`\`\``);
   for (const t of deps.testCommands ?? []) {
     step(`🧪 ${t.label}`);
     run.log({ type: "system", text: `🧪 ${t.label}` });
@@ -486,33 +477,19 @@ async function ship(cfg: Config, s: Session, out: any, sp: ShipSpec, reg: RunReg
     const tail = await tryTest(testCmd.join(" "), testCmd, wt);
     if (tail !== undefined) return failed(testCmd.join(" "), tail);
   } else if (!out.tests_passed && out.tests_ran) {
-    return fail(`에이전트 테스트(${out.tests_ran}) 실패 — 커밋 안 함.\n${out.summary}`);
+    return fail(`에이전트가 보고한 테스트(${out.tests_ran})가 실패했어요. 변경은 워크트리에 그대로 있어요.\n${out.summary}`);
   }
-  if (st.stopped) { run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 커밋 안 함.", branch, log, pushed: false }; }
+  if (st.stopped) { run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 변경을 그대로 남겨 뒀어요.", branch, worktree: wt, log, runId: run.id }; }
 
-  await shAsync("git", ["add", "-A"], wt);
-  await shAsync("git", ["commit", "-q", "-m", `${out.commit_message.trim()}\n\n${sp.trailer}${deps.trailer ? `\n${deps.trailer}` : ""}`], wt, author);
-  const headOid = await shAsync("git", ["rev-parse", "HEAD"], wt).catch(() => "");
-  await repoGit(wt, () => shAsync("git", ["push", "-q", "-u", "origin", branch], wt)); // 원격 추적 참조를 바꾼다 — 같은 레포 git 줄
-  step("🚀 푸시 완료");
-  run.log({ type: "system", text: `🚀 ${branch} 푸시 완료` });
-  let prUrl: string | undefined = sp.existingPr;
-  if (prUrl) {
-    run.log({ type: "system", text: `PR 갱신 ${prUrl}` });
-  } else {
-    try {
-      const gh = deps.gh ?? ((args: string[], cwd: string) => shAsync("gh", args, cwd));
-      prUrl = await gh(["pr", "create", "--base", sp.base, "--head", branch, "--title", out.commit_message.split("\n")[0],
-        "--body", `${out.summary}\n\n- ${sp.planLine}\n- 테스트: ${testsRan.join(" · ") || testCmd?.join(" ") || out.tests_ran || "없음"}\n\n_${deps.prNote ?? "cy-agent가 자동 생성 — 머지는 사용자 승인 뒤"}_`], wt) || undefined;
-    } catch (e: any) { step(`⚠️ PR 생성 실패: ${String(e.stderr ?? e.message).slice(0, 200)}`); }
-    if (prUrl) run.log({ type: "system", text: `PR ${prUrl}` });
-  }
-  if (prUrl) reg.update(run.id, { prUrl });
+  // 커밋도 푸시도 PR 도 없다. 변경·테스트 결과만 남기고 워크트리는 정리 단계가 안전하게 보존한다(worktree-keep.ts)
+  const testLine = testsRan.length ? `테스트 통과: ${testsRan.join(" · ")}` : out.tests_ran ? `테스트 실행 안 함(모델 보고: ${out.tests_ran})` : "테스트 실행 안 함";
+  step(`📁 변경 ${files}개 · ${testLine}`);
+  run.log({ type: "system", text: `📁 변경 ${files}개 · ${testLine} — 커밋·푸시 없이 워크트리에 남겨 뒀어요: ${wt}`, worktree: wt });
   run.end("done");
-  return { ok: true, summary: out.summary, prUrl, branch, log, pushed: true, runId: run.id, ...(testsRan.length ? { testsRan } : {}), ...(/^[0-9a-f]{40,64}$/.test(headOid) ? { headOid } : {}) };
+  return { ok: true, summary: out.summary, branch, worktree: wt, files, log, runId: run.id, ...(testsRan.length ? { testsRan } : {}) };
 }
 
-// PR 대상 브랜치 이름 다듬기: "origin/develop"·"refs/heads/develop" → "develop", 빈 값은 없음
+// 작업 기준 브랜치 이름 다듬기: "origin/develop"·"refs/heads/develop" → "develop", 빈 값은 없음
 export function normalizeBase(b?: string | null): string | undefined {
   const t = String(b ?? "").trim().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
   return t || undefined;
@@ -522,19 +499,43 @@ export function validBranchName(b: string): boolean {
   return b.length <= 100 && /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(b) && !b.includes("..") && !b.endsWith("/") && !b.endsWith(".lock");
 }
 
-// 기준(=PR 대상) 브랜치. want 를 정했으면 origin/<want> — 없으면 실패(기본 브랜치로 대신 올리지 않는다, main = 운영일 수 있다).
-// 안 정했으면 origin/HEAD(없으면 main)
+// 작업 기준(제안의 base — 보통 PR 대상) 브랜치 이름. want 를 정했으면 origin/<want> → 로컬 <want> 순 — 둘 다 없으면 실패
+// (기본 브랜치로 대신 시작하지 않는다, main = 운영일 수 있다). 안 정했으면 origin/HEAD, 원격이 없으면 지금 체크아웃.
+// 원격·PR·GitHub 로그인 없이도 로컬 작업이 시작되도록 원격은 있으면 쓰고 없으면 로컬로 진행한다.
 // 부르는 쪽이 repoGit(같은 레포 git 줄) 안에서 부른다(fetch 가 원격 추적 참조를 바꾼다)
 export async function pickBase(repo: string, want: string | undefined, step: (s: string) => void): Promise<string> {
-  try { await shAsync("git", ["fetch", "-q", "origin"], repo); } catch { step("⚠️ fetch 실패 — 로컬 기준으로 진행"); }
+  try { await shAsync("git", ["fetch", "-q", "origin"], repo); } catch { step("⚠️ 원격이 없어 로컬 기준으로 진행"); }
   const b = normalizeBase(want);
   if (!b) {
-    try { return sh("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repo).replace(/^origin\//, ""); } catch { return "main"; }
+    try { return sh("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repo).replace(/^origin\//, ""); }
+    catch { return sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], repo); }
   }
-  if (!validBranchName(b)) throw new Error(`PR 대상 브랜치 이름이 이상해요: ${b}`);
-  try { sh("git", ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${b}^{commit}`], repo); }
-  catch { throw new Error(`origin 에 ${b} 브랜치가 없어요 — PR 대상 브랜치를 확인해 주세요(기본 브랜치로 대신 올리지 않았어요)`); }
-  return b;
+  if (!validBranchName(b)) throw new Error(`작업 기준 브랜치 이름이 이상해요: ${b}`);
+  if (await refExists(repo, `refs/remotes/origin/${b}`)) return b;
+  if (await refExists(repo, `refs/heads/${b}`)) { step(`⚠️ origin 에 ${b} 가 없어 로컬 ${b} 로 진행`); return b; }
+  throw new Error(`origin·로컬에 ${b} 브랜치가 없어요 — 작업 기준 브랜치를 확인해 주세요`);
+}
+
+async function refExists(repo: string, ref: string): Promise<boolean> {
+  try { await shAsync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repo); return true; } catch { return false; }
+}
+// 남아 있는 로컬 브랜치와 부딪히지 않는 이름(같은 제안 id 앞자리로 새 run 이 생겨도 보존된 작업을 밀어내지 않는다)
+async function freeBranch(repo: string, want: string): Promise<string> {
+  for (let i = 2; await refExists(repo, `refs/heads/${want}`); i++) want = `${want}-${i}`;
+  return want;
+}
+// 빈 워크트리 경로(보존된 워크트리와 같은 이름이면 -2, -3 …)
+function freeWorktreePath(wtDir: string, name: string): string {
+  let wt = join(wtDir, name);
+  for (let i = 2; existsSync(wt); i++) wt = join(wtDir, `${name}-${i}`);
+  return wt;
+}
+// 그 브랜치가 가리키는 커밋(origin 우선, 없으면 로컬) — worktree add 의 시작점. 없으면 실패
+async function baseCommit(repo: string, branch: string): Promise<string> {
+  for (const ref of [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`]) {
+    try { return (await shAsync("git", ["rev-parse", "--verify", `${ref}^{commit}`], repo)).trim(); } catch {}
+  }
+  throw new Error(`기준 브랜치(${branch})를 찾지 못했어요`);
 }
 
 export async function runFix(cfg: Config, p: Proposal, onStep: (s: string) => void, deps: FixDeps = {}): Promise<FixResult> {
@@ -544,16 +545,19 @@ export async function runFix(cfg: Config, p: Proposal, onStep: (s: string) => vo
   const reg = deps.runs ?? runs;
   const wtDir = deps.worktreesDir ?? join(HOME_DIR, "worktrees");
 
-  const branch = fixBranch(p);
-  const wt = join(wtDir, `${basename(repo)}-${p.id.slice(0, 8)}`);
+  let branch = fixBranch(p);
+  // 보존된 앞선 워크트리와 겹치지 않게 빈 경로를 찾는다(변경이 있는 워크트리는 지우지 않는다)
+  const wt = freeWorktreePath(wtDir, `${basename(repo)}-${p.id.slice(0, 8)}`);
   mkdirSync(wtDir, { recursive: true });
   // fetch·worktree add 만 같은 레포 git 줄로(다른 수정 run 과 참조 갱신이 겹치지 않게) — 그 뒤 수정·테스트는 동시에
   const base = await repoGit(repo, async () => {
-    const b = await pickBase(repo, p.base, step); // 제안에 PR 대상 브랜치가 있으면 그것(없으면 실패), 아니면 기본 브랜치
-    await shAsync("git", ["worktree", "add", "-q", "-b", branch, wt, `origin/${b}`], repo);
+    branch = await freeBranch(repo, branch);
+    const b = await pickBase(repo, p.base, step); // 제안에 기준 브랜치가 있으면 그것(원격→로컬), 아니면 기본 브랜치
+    const at = await baseCommit(repo, b);
+    await shAsync("git", ["worktree", "add", "-q", "-b", branch, wt, at], repo);
     return b;
   });
-  step(`🌿 워크트리 ${branch} (기준 ${base}${p.base ? " — PR 대상" : ""})`);
+  step(`🌿 워크트리 ${branch} (기준 ${base}${p.base ? " — 작업 기준" : ""})`);
   try { deps.prepareWorktree?.(wt, repo); } catch (e: any) { step(`⚠️ 워크트리 준비 실패: ${String(e?.message ?? e).slice(0, 160)}`); }
 
   // 세션 창용 run: 돌고 있는 동안 메시지·중단·정지를 받는다
@@ -567,30 +571,36 @@ export async function runFix(cfg: Config, p: Proposal, onStep: (s: string) => vo
   s.run.log({ type: "user", text: prompt });
   s.input.push(prompt);
 
-  let pushed = false;
   try {
     const out = await drive(s, deps.query ?? (coding.provider === "codex" ? codexQuery : query), sdkOptions(cfg, wt, { model: coding.model }, deps.hooks?.(wt), iso), deps, step);
     await iso.closeAll();
-    if (!out) { s.run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 커밋 안 함.", branch, log, runId: s.run.id }; }
-    const r = await ship(cfg, s, out, { wt, branch, base, trailer: `Requested-via: cy-agent (proposal ${p.id})`, planLine: `계획: ${p.plan}` }, reg, step, log, deps);
-    pushed = r.pushed;
-    const { pushed: _p, ...res } = r;
-    return res;
+    if (!out) { s.run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 변경을 그대로 남겨 뒀어요.", branch, worktree: wt, log, runId: s.run.id }; }
+    return await finishLocal(s, out, { wt, branch }, step, log, deps);
   } catch (e: any) {
-    if (e instanceof MaxTurnsError) { s.run.end("stopped", { error: MAX_TURNS_NOTE }); return { ok: false, summary: `${MAX_TURNS_NOTE} — 이어서 하기로 마저 할 수 있어요.`, branch, log }; }
+    if (e instanceof MaxTurnsError) { s.run.end("stopped", { error: MAX_TURNS_NOTE }); return { ok: false, summary: `${MAX_TURNS_NOTE} — 이어서 하기로 마저 할 수 있어요.`, branch, worktree: wt, log }; }
     s.run.end("failed", { error: String(e?.message ?? e) });
     throw e;
   } finally {
     s.clearIdle();
     s.input.close();
-    // 브랜치는 원격에 남고, 로컬 워크트리만 정리 — 단 저장 안 된 작업(커밋 안 된 변경·푸시 안 된 커밋)이 있으면 남긴다(worktree-keep.ts).
-    // 정지했으면 푸시 안 한 로컬 브랜치도 지운다(워크트리를 남겼으면 그대로)
+    // 커밋·푸시를 안 하니 작업은 워크트리(미커밋 변경)에 남는다 — 지우지 않는다(worktree-keep.ts).
+    // 바뀐 게 하나도 없을 때만 워크트리를 치우고, 정지했다면 그때만 로컬 브랜치도 지운다(남긴 게 있으면 그대로)
     await iso.closeAll();
     await repoGit(repo, async () => {
-      const kept = cleanupWorktree(repo, wt, { run: s.run, shipped: pushed });
-      if (s.st.stopped && !pushed && !kept) { try { await shAsync("git", ["branch", "-D", branch], repo); } catch {} }
+      const kept = cleanupWorktree(repo, wt, { run: s.run, shipped: false });
+      if (s.st.stopped && !kept) { try { await shAsync("git", ["branch", "-D", branch], repo); } catch {} }
     });
   }
+}
+
+// 완료 화면·Slack·대화에 쓰는 한 덩이 — 실제로 한 것만 적는다(커밋·푸시·PR 없음, 테스트는 돌린 것만 "통과"로)
+export function localDoneLine(r: Pick<FixResult, "branch" | "summary" | "worktree" | "files" | "testsRan">): string {
+  return [
+    `✅ 로컬 변경 완료 — 커밋·푸시·PR 없음${r.branch ? ` (\`${r.branch}\`)` : ""}`,
+    r.summary,
+    r.worktree ? `보존된 워크트리: \`${r.worktree}\`` : "",
+    `바뀐 파일 ${r.files ?? "?"}개 · 테스트: ${r.testsRan?.length ? r.testsRan.join(" · ") : "실행 안 함"}`,
+  ].filter(Boolean).join("\n");
 }
 
 export const fixBranch = (p: Pick<Proposal, "id" | "title">) => `cy/${slugify(p.title)}-${p.id.slice(0, 6)}`;
@@ -600,12 +610,11 @@ export const continueTitle = (title: string) => `${title.replace(/(?:\s·\s이�
 export type ContinueSpec = {
   parent: Run;       // 끝난 수정 run
   repo: string;      // 원래 레포
-  branch: string;    // 앞선 작업 브랜치(origin 에 푸시된 cy/…)
-  prUrl?: string;    // 앞선 PR(있으면)
+  branch: string;    // 앞선 작업 브랜치(로컬 cy/… — 원격에 없어도 된다)
   text: string;      // 사용자가 이어서 한 말
   summary: string;   // 앞선 run 기록 요약(resume 못 할 때 넣는다)
   proposalId?: string;
-  base?: string;     // 원래 제안의 PR 대상 브랜치(없으면 기본 브랜치) — 새 브랜치·새 PR 은 여기로
+  base?: string;     // 원래 제안의 작업 기준 브랜치(없으면 기본 브랜치) — 앞선 워크트리·브랜치가 없어 새로 시작할 때만
   model?: string;    // 세션 창에서 고른 모델(없으면 앞선 run 의 모델, 그것도 안 맞으면 코드 작업 AI 의 설정 모델)
 };
 export type Continuation = { run: RunHandle; start(onStep: (s: string) => void): Promise<FixResult> };
@@ -626,7 +635,6 @@ export function prepareContinue(cfg: Config, spec: ContinueSpec, deps: FixDeps =
   const s = openSession(reg, {
     kind: "fix", title: continueTitle(parent.title), model: coding.model ?? "codex", parentId: parent.id,
     ...(spec.proposalId ? { ref: spec.proposalId } : {}), repo: spec.repo, branch: spec.branch,
-    ...(spec.prUrl ? { prUrl: spec.prUrl } : {}),
   }, step);
   if (coding.model && spec.model === coding.model) s.st.model = coding.model;
   const run = s.run;
@@ -637,45 +645,47 @@ export function prepareContinue(cfg: Config, spec: ContinueSpec, deps: FixDeps =
   const start = async (cb: (s: string) => void): Promise<FixResult> => {
     onStep = cb;
     if (s.st.stopped) { run.end("stopped"); return { ok: false, summary: "시작 전에 정지했어요.", log }; }
-    let repo: string, wt = "", branch = spec.branch, pushed = false, created = false;
+    let repo: string, wt = "", branch = spec.branch, created = false;
     let iso: WorktreeIsolation | undefined;
     try {
       repo = resolveRepo(cfg, spec.repo);
       const src = repo;
-      const base = await repoGit(src, () => pickBase(src, spec.base, step));
-      const baseLabel = spec.base ? "PR 대상 브랜치" : "기본 브랜치";
-      // 앞선 브랜치가 살아 있고 PR 이 머지·닫히지 않았으면 그 브랜치에서, 아니면 기본 브랜치에서 새로
-      const pr = await (deps.prState ? deps.prState(spec.prUrl ?? branch, repo) : ghPrState(spec.prUrl ?? branch, repo));
-      const remote = await remoteHasBranch(repo, branch);
+      // 앞선 워크트리가 남아 있으면 그대로 쓴다 — 미커밋 변경이 그 안에 있다(원격 브랜치·PR 이 필요 없다).
+      // 없으면 로컬 브랜치로, 그것도 없으면 작업 기준 브랜치에서 새로 시작한다
+      let base: string | undefined;
       let note: string | undefined;
-      let existingPr = pr && pr.state === "OPEN" ? (pr.url ?? spec.prUrl) : undefined;
-      // resume 은 같은 경로(cwd)여야 세션을 찾는다 → 앞선 워크트리 경로가 비어 있으면 그대로 다시 쓴다
-      const reuse = parent.cwd && resolve(parent.cwd).startsWith(resolve(wtDir) + sep) && !existsSync(parent.cwd) ? parent.cwd : undefined;
-      wt = reuse ?? join(wtDir, `${basename(repo)}-c${run.id.slice(0, 8)}`);
-      mkdirSync(wtDir, { recursive: true });
-      if (remote && !(pr && (pr.state === "MERGED" || pr.state === "CLOSED"))) {
-        await repoGit(src, () => shAsync("git", ["worktree", "add", "-q", "-B", branch, wt, `origin/${branch}`], src));
-        step(`🌿 워크트리 ${branch} (앞선 작업 브랜치 이어서)`);
-        run.log({ type: "system", text: `🌿 ${branch} 에서 이어서 해요${existingPr ? ` — PR ${existingPr} 에 올라가요` : ""}` });
+      const keptWt = await reusableWorktree(parent.cwd, repo);
+      if (keptWt) {
+        wt = keptWt;
+        step(`🌿 앞선 워크트리에서 이어서 해요: ${wt}`);
+        run.log({ type: "system", text: `🌿 앞선 작업 워크트리에서 이어서 해요 — 미커밋 변경이 그대로 있어요: ${wt}` });
+      } else if (await hasLocalBranch(repo, branch)) {
+        wt = join(wtDir, `${basename(repo)}-c${run.id.slice(0, 8)}`);
+        mkdirSync(wtDir, { recursive: true });
+        await repoGit(src, () => shAsync("git", ["worktree", "add", "-q", wt, branch], src));
+        step(`🌿 워크트리 ${branch} (앞선 로컬 브랜치 이어서)`);
+        run.log({ type: "system", text: `🌿 앞선 로컬 브랜치 ${branch} 에서 이어서 해요` });
       } else {
-        const why = pr && pr.state === "MERGED" ? "PR 이 이미 머지돼서" : pr && pr.state === "CLOSED" ? "PR 이 닫혀서" : "브랜치가 원격에 없어서";
         const old = branch;
         branch = `cy/${slugify(parent.title)}-${run.id.slice(0, 6)}`;
-        existingPr = undefined;
-        await repoGit(src, () => shAsync("git", ["worktree", "add", "-q", "-b", branch, wt, `origin/${base}`], src));
+        base = await repoGit(src, () => pickBase(src, spec.base, step));
+        const at = await repoGit(src, () => baseCommit(src, base!));
+        wt = join(wtDir, `${basename(repo)}-c${run.id.slice(0, 8)}`);
+        mkdirSync(wtDir, { recursive: true });
+        await repoGit(src, () => shAsync("git", ["worktree", "add", "-q", "-b", branch, wt, at], src));
         created = true;
-        reg.update(run.id, { branch, prUrl: "" });
-        note = `참고: 앞선 작업 브랜치(${old})는 ${why} ${baseLabel}(${base})에서 새 브랜치로 시작한다. 앞선 변경이 이미 들어가 있을 수도(머지됨) 없을 수도 있으니 파일을 먼저 확인해.`;
+        reg.update(run.id, { branch });
+        note = `참고: 앞선 작업의 워크트리와 로컬 브랜치(${old})가 남아 있지 않아 ${base} 에서 새 브랜치로 시작한다. 앞선 변경은 되살릴 수 없다.`;
         step(`🌿 워크트리 ${branch} (기준 ${base})`);
-        run.log({ type: "system", text: `⚠️ 앞선 브랜치 ${old} 는 ${why} ${base} 에서 새 브랜치 ${branch} 로 시작해요` });
+        run.log({ type: "system", text: `⚠️ 앞선 워크트리·브랜치(${old})가 없어 ${base} 에서 새 브랜치 ${branch} 로 시작해요 — 앞선 변경은 되살릴 수 없어요` });
       }
       reg.update(run.id, { cwd: wt });
 
       // 이전 SDK 세션을 이어 쓸 수 있으면 resume(fork — 앞선 세션은 그대로), 아니면 요약을 넣고 새 세션
       const sid = parent.sdkSessionId;
       const exists = deps.sessionExists ?? defaultSessionExists;
-      // resume 은 같은 실행기의 세션만(Codex 세션은 ephemeral 이라 이어 쓰지 않는다)
-      const canResume = coding.provider === "claude-code" && !sid?.startsWith("codex:") && !!(reuse && sid && await exists(sid, wt).catch(() => false));
+      // resume 은 같은 실행기의 세션만(Codex 세션은 ephemeral 이라 이어 쓰지 않는다). 같은 워크트리에서 이어갈 때만
+      const canResume = coding.provider === "claude-code" && !sid?.startsWith("codex:") && !!(keptWt && sid && await exists(sid, wt).catch(() => false));
       const prompt = canResume ? continuePrompt(spec.text, { note }) : continuePrompt(spec.text, { summary: spec.summary, note });
       run.log({ type: "system", text: canResume ? `↩︎ 이전 세션 이어서(resume ${sid!.slice(0, 8)}…)` : "📝 이전 세션을 열 수 없어 앞선 기록 요약을 넣고 새로 시작해요" });
       s.input.push(prompt, undefined, true); // 시작 전에 보낸 메시지보다 앞에
@@ -683,17 +693,10 @@ export function prepareContinue(cfg: Config, spec: ContinueSpec, deps: FixDeps =
       iso = new WorktreeIsolation({ roots: [wt], author: cfg.gitAuthor, worktreesDir: wtDir, log: (ev) => run.log(ev) });
       const out = await drive(s, deps.query ?? (coding.provider === "codex" ? codexQuery : query), sdkOptions(cfg, wt, { model: coding.model, ...(canResume ? { resume: sid, forkSession: true } : {}) }, [], iso), deps, step);
       await iso.closeAll();
-      if (!out) { run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 커밋 안 함.", branch, log }; }
-      const r = await ship(cfg, s, out, {
-        wt, branch, base, existingPr,
-        trailer: `Requested-via: cy-agent (continue of run ${parent.id}${spec.proposalId ? `, proposal ${spec.proposalId}` : ""})`,
-        planLine: `이어서: ${spec.text.split("\n")[0].slice(0, 200)}`,
-      }, reg, step, log, deps);
-      pushed = r.pushed;
-      const { pushed: _p, ...res } = r;
-      return res;
+      if (!out) { run.end("stopped"); return { ok: false, summary: "사용자가 정지했어요 — 변경을 그대로 남겨 뒀어요.", branch, worktree: wt, log }; }
+      return await finishLocal(s, out, { wt, branch }, step, log, deps);
     } catch (e: any) {
-      if (e instanceof MaxTurnsError) { run.end("stopped", { error: MAX_TURNS_NOTE }); return { ok: false, summary: `${MAX_TURNS_NOTE} — 이어서 하기로 마저 할 수 있어요.`, branch, log }; }
+      if (e instanceof MaxTurnsError) { run.end("stopped", { error: MAX_TURNS_NOTE }); return { ok: false, summary: `${MAX_TURNS_NOTE} — 이어서 하기로 마저 할 수 있어요.`, branch, worktree: wt, log }; }
       run.end("failed", { error: String(e?.message ?? e) });
       throw e;
     } finally {
@@ -701,21 +704,28 @@ export function prepareContinue(cfg: Config, spec: ContinueSpec, deps: FixDeps =
       s.input.close();
       await iso?.closeAll();
       await repoGit(spec.repo, async () => {
-        const kept = cleanupWorktree(spec.repo, wt, { run, shipped: pushed });
-        if (s.st.stopped && !pushed && created && !kept) { try { await shAsync("git", ["branch", "-D", branch], spec.repo); } catch {} }
+        const kept = cleanupWorktree(spec.repo, wt, { run, shipped: false });
+        if (s.st.stopped && created && !kept) { try { await shAsync("git", ["branch", "-D", branch], spec.repo); } catch {} }
       });
     }
   };
   return { run, start };
 }
 
-async function remoteHasBranch(repo: string, branch: string): Promise<boolean> {
-  try { await shAsync("git", ["ls-remote", "--exit-code", "--heads", "origin", branch], repo, undefined, 120e3); return true; } catch { return false; }
+// 로컬 브랜치가 남아 있나(원격·PR 없이 이어 하기 판단 — GitHub 로그인이 필요 없다)
+async function hasLocalBranch(repo: string, branch: string): Promise<boolean> {
+  return !!branch && validBranchName(branch) && refExists(repo, `refs/heads/${branch}`);
 }
-async function ghPrState(ref: string, cwd: string): Promise<{ state: string; url?: string } | undefined> {
+// 끝난 run 의 워크트리를 그대로 이어 쓸 수 있나. 원래 체크아웃은 안 된다(그 위에 작업하지 않는다) —
+// git dir 과 common dir 이 같으면 원래 체크아웃이다(git 2.31+ --path-format, mainCheckout 과 같은 전제)
+async function reusableWorktree(wt: string | undefined, repo: string): Promise<string | undefined> {
+  if (!wt || !existsSync(wt)) return undefined;
   try {
-    const j = JSON.parse(await shAsync("gh", ["pr", "view", ref, "--json", "state,url"], cwd, undefined, 120e3));
-    return typeof j?.state === "string" ? { state: j.state, url: j.url } : undefined;
+    const main = mainCheckout(wt); // 워크트리의 원래 체크아웃(git common dir 의 부모)
+    if (!main || realpathSync(main) !== realpathSync(repo)) return undefined; // 다른 레포·깨진 워크트리
+    const dir = await shAsync("git", ["rev-parse", "--path-format=absolute", "--git-dir"], wt);
+    const common = await shAsync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], wt);
+    return resolve(dir) !== resolve(common) ? wt : undefined; // 원래 체크아웃 자체면 이어 하기 대상이 아니다
   } catch { return undefined; }
 }
 async function defaultSessionExists(sessionId: string, cwd: string): Promise<boolean> {

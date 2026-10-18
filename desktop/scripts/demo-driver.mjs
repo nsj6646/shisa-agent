@@ -1019,10 +1019,10 @@ const SCENES = {
       await sleep(500);
     }
     await d.wait(1500);
-    d.cue('테스트 통과 → PR');
-    await d.bubble({ id, text: '테스트 통과했어요! ✅ 푸시했어요 (뿌듯한 시사)', kind: 'info', ttlMs: 120000 });
+    d.cue('테스트 통과 → 로컬 변경');
+    await d.bubble({ id, text: '테스트 통과했어요! ✅ 변경은 워크트리에 남겨 뒀어요', kind: 'info', ttlMs: 120000 });
     await d.wait(3500);
-    await d.bubble({ id, text: 'PR 올렸어요 — #131 🚀 (스이시~사)', kind: 'done', ttlMs: d.ttl(8000) });
+    await d.bubble({ id, text: '변경을 남겨 뒀어요 (cy/…)', kind: 'done', ttlMs: d.ttl(8000) });
     await d.mood('idle');
     await d.wait(3000);
     await ss.eval('window.close()').catch(() => {});

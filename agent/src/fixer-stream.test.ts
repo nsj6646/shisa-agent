@@ -2,9 +2,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { runFix, InputQueue } from "./fixer.ts";
 import { RunRegistry } from "./runs.ts";
@@ -100,7 +100,7 @@ test("InputQueue: push 순서대로, close 하면 끝", async () => {
   assert.throws(() => q.push("d"), /closed/);
 });
 
-test("실행 중 메시지 주입 → 다음 사용자 턴으로 들어가고 기록에 보인다 → 커밋·푸시", async () => {
+test("실행 중 메시지 주입 → 다음 사용자 턴으로 들어가고 기록에 보인다 → 워크트리에 미커밋으로 남는다", async () => {
   const { root, app, origin, wts } = setupRepo();
   const reg = new RunRegistry(new DatabaseSync(":memory:"));
   let release!: () => void;
@@ -151,11 +151,11 @@ test("실행 중 메시지 주입 → 다음 사용자 턴으로 들어가고 �
   assert.deepEqual(dv.map((e) => [e.msgId, e.state]), [[sr.msgId, "delivered"]]); // 다음 턴 첫 답에 uuid 가 찍힌 때
   assert.ok(g.events.some((e) => e.type === "assistant" && e.text === "받았어: 그리고 README에 한 줄 추가해"));
   assert.ok(g.events.some((e) => e.type === "tool_use" && e.name === "Write" && e.diff?.[0].new === "hi\n"));
-  // 커밋은 cy-agent 가(작성자 고정), 원격 브랜치에 README 줄까지
-  const branch = r.branch!;
-  assert.match(git(origin, "log", "-1", "--format=%an <%ae>", branch), /Bot <bot@example.com>/);
-  assert.match(git(origin, "show", `${branch}:README.md`), /한 줄 더/);
-  assert.equal(existsSync(join(wts, "app-prop-inj")), false); // 워크트리 정리
+  // 커밋·푸시 없이 워크트리에 두 변경이 미커밋으로 남는다
+  assert.match(readFileSync(join(r.worktree!, "README.md"), "utf8"), /한 줄 더/);
+  assert.equal(existsSync(join(r.worktree!, "hello.txt")), true);
+  assert.equal(git(r.worktree!, "rev-list", "--count", "HEAD"), "1");
+  assert.equal(git(origin, "branch", "--list", r.branch!), "");
   // 끝난 run 은 읽기 전용
   assert.equal((await reg.sendMessage(id, "또") as any).status, 409);
   // 스트리밍 입력 + 안전장치 유지
@@ -218,7 +218,8 @@ test("진행 중인 턴에 접혀 들어간 메시지(도구 경계 뒤 응답) 
   assert.equal(r.ok, true, r.summary);
   assert.equal(folded, injectedPrompt("README 에도 한 줄"));
   assert.ok(Date.now() - t0 < 10_000, "60초 대기 없이 끝나야 함");
-  assert.match(git(origin, "show", `${r.branch}:README.md`), /접힌 메시지 반영/);
+  assert.match(readFileSync(join(r.worktree!, "README.md"), "utf8"), /접힌 메시지 반영/);
+  assert.equal(git(origin, "branch", "--list", r.branch!), ""); // 푸시 안 함
 });
 
 test("중단(interrupt) → 메시지 보내면 이어서 → 완료", async () => {
@@ -289,8 +290,9 @@ test("정지(stop) → 저장 안 된 변경이 있으면 워크트리를 남기
   assert.equal(existsSync(join(wt, "hello.txt")), true);
   assert.ok(reg.getRun(id)!.events.some((e) => e.type === "system" && e.worktree === wt && /남겨 뒀어요/.test(e.text ?? "")));
   assert.match(git(app, "branch", "--list", "cy/*"), /cy\//);
-  assert.equal(git(origin, "branch", "--list", "cy/*"), "");
+  assert.equal(git(origin, "branch", "--list", "cy/*"), ""); // 원격에는 아무것도 안 올렸다
   assert.equal(git(origin, "rev-list", "--count", "--all"), "1");
+  assert.equal(git(wt, "status", "--porcelain"), "?? hello.txt");
 });
 
 // PR 대상 브랜치: 제안에 base 가 있으면 origin/<base> 에서 갈라 그 브랜치로 PR, 없으면 기본 브랜치, origin 에 없으면 실패
@@ -304,41 +306,48 @@ function withDevelop(o: ReturnType<typeof setupRepo>) {
 }
 const writeHello = () => fakeSdk(async (_n, _m, { cwd, emit }) => { writeFileSync(join(cwd, "hello.txt"), "hi\n"); emit(ok(REPORT("hello"))); });
 
-test("PR 대상 브랜치 base=develop → origin/develop 에서 갈라 --base develop 으로 PR", async () => {
+test("작업 기준 base=develop → origin/develop 에서 갈라 로컬에만 남긴다(커밋·푸시·PR 없음)", async () => {
   const o = setupRepo();
   withDevelop(o);
   const reg = new RunRegistry(new DatabaseSync(":memory:"));
-  const ghCalls: string[][] = [];
   const steps: string[] = [];
   const r = await runFix(cfgFor(o.root), { ...proposal(o.app, "prop-base-dev"), base: "origin/develop" }, (s) => steps.push(s),
-    { query: writeHello().fn, runs: reg, worktreesDir: o.wts, gh: (a) => { ghCalls.push(a); return "https://github.com/x/y/pull/9"; } });
+    { query: writeHello().fn, runs: reg, worktreesDir: o.wts });
   assert.equal(r.ok, true, r.summary);
-  assert.equal(r.prUrl, "https://github.com/x/y/pull/9");
-  assert.deepEqual(ghCalls[0].slice(0, 5), ["pr", "create", "--base", "develop", "--head"]);
-  assert.match(git(o.origin, "show", `${r.branch}:DEV.md`), /develop only/); // develop 위에서 갈랐다
-  assert.ok(steps.some((s) => /기준 develop — PR 대상/.test(s)));
+  assert.equal(r.worktree, reg.summary(r.runId!)!.cwd);
+  assert.equal(existsSync(join(r.worktree!, "hello.txt")), true);
+  assert.match(readFileSync(join(r.worktree!, "DEV.md"), "utf8"), /develop only/); // develop 위에서 갈랐다
+  assert.ok(steps.some((s) => /기준 develop — 작업 기준/.test(s)));
+  assert.equal(git(o.origin, "branch", "--list", "cy/*"), ""); // 원격에 아무것도 안 올렸다
+  assert.equal(git(o.app, "rev-list", "--count", "HEAD"), "1"); // 원래 체크아웃도 그대로
 });
 
-test("base 없으면 기본 브랜치(origin/HEAD) 기준 --base main", async () => {
+test("base 없으면 기본 브랜치(origin/HEAD) 기준, 원격이 없어도 로컬에서 시작", async () => {
   const o = setupRepo();
   withDevelop(o);
-  const ghCalls: string[][] = [];
   const r = await runFix(cfgFor(o.root), proposal(o.app, "prop-base-def"), () => {},
-    { query: writeHello().fn, runs: new RunRegistry(new DatabaseSync(":memory:")), worktreesDir: o.wts, gh: (a) => { ghCalls.push(a); return ""; } });
+    { query: writeHello().fn, runs: new RunRegistry(new DatabaseSync(":memory:")), worktreesDir: o.wts });
   assert.equal(r.ok, true, r.summary);
-  assert.equal(ghCalls[0][3], "main");
-  assert.throws(() => git(o.origin, "show", `${r.branch}:DEV.md`));
+  assert.equal(existsSync(join(r.worktree!, "DEV.md")), false); // main 위에서 갈랐다
+  // 원격이 아예 없는 레포에서도(로컬 브랜치만) 수정·테스트가 시작된다
+  const solo = mkdtempSync(join(tmpdir(), "cy-solo-"));
+  git(solo, "init", "-q", "-b", "main");
+  writeFileSync(join(solo, "README.md"), "# solo\n");
+  git(solo, "add", "-A");
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], { cwd: solo });
+  const rs = await runFix({ repoRoots: [dirname(solo)], gitAuthor: { name: "Bot", email: "b@e" }, models: { code: "fake" } } as unknown as Config, proposal(solo, "prop-solo-1"), () => {},
+    { query: writeHello().fn, runs: new RunRegistry(new DatabaseSync(":memory:")), worktreesDir: join(dirname(solo), "wts") });
+  assert.equal(rs.ok, true, rs.summary);
+  assert.equal(existsSync(join(rs.worktree!, "hello.txt")), true);
 });
 
-test("base 가 origin 에 없거나 이상한 이름이면 기본 브랜치로 대신하지 않고 실패", async () => {
+test("base 가 origin·로컬에 없거나 이상한 이름이면 기본 브랜치로 대신하지 않고 실패", async () => {
   const o = setupRepo();
   const sdk = writeHello();
-  const ghCalls: string[][] = [];
-  const deps = { query: sdk.fn, runs: new RunRegistry(new DatabaseSync(":memory:")), worktreesDir: o.wts, gh: (a: string[]) => { ghCalls.push(a); return ""; } };
-  await assert.rejects(runFix(cfgFor(o.root), { ...proposal(o.app, "prop-base-none"), base: "develop" }, () => {}, deps), /origin 에 develop 브랜치가 없어요/);
+  const deps = { query: sdk.fn, runs: new RunRegistry(new DatabaseSync(":memory:")), worktreesDir: o.wts };
+  await assert.rejects(runFix(cfgFor(o.root), { ...proposal(o.app, "prop-base-none"), base: "develop" }, () => {}, deps), /origin·로컬에 develop 브랜치가 없어요/);
   await assert.rejects(runFix(cfgFor(o.root), { ...proposal(o.app, "prop-base-bad"), base: "--upload-pack=x" }, () => {}, deps), /브랜치 이름이 이상해요/);
   assert.equal(sdk.calls.length, 0);
-  assert.equal(ghCalls.length, 0);
   assert.equal(git(o.origin, "branch", "--list", "cy/*"), "");
 });
 

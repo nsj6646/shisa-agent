@@ -78,7 +78,7 @@ export function canControl(run) {
 export function readOnlyReason(run) {
   if (!run) return '';
   if (canSend(run)) return '';
-  if (run.kind === 'fix' && run.status === 'running') return '마무리(테스트·커밋) 중이라 지금은 메시지를 받지 않아요. 끝나면 이어서 할 수 있어요.';
+  if (run.kind === 'fix' && run.status === 'running') return '마무리(변경 확인·테스트) 중이라 지금은 메시지를 받지 않아요. 끝나면 이어서 할 수 있어요.';
   if (run.status !== 'running') return run.kind === 'fix' ? '끝난 작업이에요 — 아래에 적으면 같은 브랜치에서 이어서 해요.' : '끝난 세션이에요 — 아래에 적으면 이 결과로 대화를 이어가요.';
   return `${kindLabel(run.kind)} 세션은 지시를 받지 않아요 — 아래에 적으면 대화로 물어봐요.`;
 }
@@ -90,7 +90,7 @@ export function composerMode(run) {
   if (!run) return { mode: 'none', enabled: false, placeholder: '왼쪽에서 세션을 고르세요', button: '보내기', hint: '' };
   if (canSend(run)) return { mode: 'inject', enabled: true, placeholder: '이 세션에 메시지 보내기 (Enter 보내기 · Shift+Enter 줄바꿈)', button: '보내기', hint: '' };
   if (run.kind === 'fix' && run.status === 'running') return { mode: 'wait', enabled: false, placeholder: '마무리 중…', button: '보내기', hint: readOnlyReason(run) };
-  if (run.kind === 'fix') return { mode: 'continue', enabled: true, placeholder: '이어서 시킬 일 (같은 브랜치·PR 에서 새 작업으로 이어져요)', button: '이어서 하기', hint: '이어서 하면 이 작업에 연결된 새 작업 세션이 시작돼요. 커밋·푸시는 테스트를 통과해야 하고, 머지는 승인해야 해요.' };
+  if (run.kind === 'fix') return { mode: 'continue', enabled: true, placeholder: '이어서 시킬 일 (보존된 워크트리에서 이어져요)', button: '이어서 하기', hint: '이어서 하면 보존된 로컬 워크트리·브랜치에서 새 작업 세션이 시작돼요. 커밋·푸시·PR 은 하지 않아요.' };
   const target = chatTarget(run.origin);
   if (target) {
     const todo = run.origin.type === 'todo';

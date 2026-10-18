@@ -41,7 +41,7 @@ function setup(fix: { ok: boolean } = { ok: true }, extra: Record<string, unknow
   let fixCalls = 0;
   const agent = new Agent(cfg, store, bus, slack, {
     think: async () => thought,
-    runFix: async (_c, _p, step) => { fixCalls++; step("Edit a.ts"); return { ...fix, summary: "바꿈", prUrl: fix.ok ? "https://github.com/x/y/pull/1" : undefined, branch: "cy/b", log: [] }; },
+    runFix: async (_c, _p, step) => { fixCalls++; step("Edit a.ts"); return { ...fix, summary: "바꿈", branch: "cy/b", worktree: "/w/cy-b", files: fix.ok ? 1 : 0, log: [] }; },
     mergePr: () => "merged",
     git: async () => [],
     ...extra,
@@ -59,7 +59,7 @@ test("브리핑: 할 일 저장, 허용 레포 제안만 올리고 말풍선", a
   assert.ok(s.bubbles.some((b) => b.text === "메일 하나 답장해야 해" && b.kind === "todo"));
 });
 
-test("승인 → 실행 → PR → 머지, 중복 승인은 무시", async () => {
+test("승인 → 실행 → 로컬 완료(커밋·푸시·PR 없음), 중복 승인은 무시", async () => {
   const s = setup();
   await s.agent.runBriefing();
   const pid = s.bubbles.find((b) => b.kind === "proposal").proposalId;
@@ -72,7 +72,9 @@ test("승인 → 실행 → PR → 머지, 중복 승인은 무시", async () =>
   // 원래 제안 메시지는 버튼만 사라지고 결과가 붙는다
   const resolved = s.updates.find((u) => /승인됨/.test(u.text));
   assert.equal(resolved.blocks.some((b: any) => b.type === "actions"), false);
-  assert.equal(await s.agent.merge(pid), "merged");
+  // 완료 안내는 실제로 한 것만: 로컬 변경·보존된 워크트리, PR·머지 카드 없음
+  assert.ok(s.posts.some((p) => p.text.startsWith("완료") && /로컬 변경 완료/.test(JSON.stringify(p.blocks))));
+  assert.equal(s.bubbles.some((b) => b.actions === "merge"), false);
 });
 
 test("실행 실패면 failed, 커밋 안 함 알림", async () => {
@@ -108,7 +110,7 @@ test("브리핑은 최신 하나로 저장되고 대시보드 신호를 보낸�
   assert.equal((await s.agent.dashboard()).todos.length, 0);
 });
 
-test("채팅: 패널 열기 + 코드 작업은 승인 없이 바로 수정 run(PR 대상 브랜치 저장), 머지만 묻는다", async () => {
+test("채팅: 패널 열기 + 코드 작업은 승인 없이 바로 수정 run(작업 기준 브랜치 저장), 머지 카드 없음", async () => {
   let s!: ReturnType<typeof setup>;
   let seen: any;
   s = setup({ ok: true }, {
@@ -118,7 +120,7 @@ test("채팅: 패널 열기 + 코드 작업은 승인 없이 바로 수정 run(P
       assert.equal((await ctx.dashboard()).commitsToday, 0);
       return { reply_md: "작업 시작했어요", bubble: "응", show: "projects", proposals: [{ repo: join(s.root, "app"), title: "다크모드", plan: "토글 추가", base: "origin/develop" }] };
     },
-    runFix: async (_c: any, p: any) => { seen = p; return { ok: true, summary: "바꿈", prUrl: "https://github.com/x/y/pull/2", branch: "cy/b", log: [] }; },
+    runFix: async (_c: any, p: any) => { seen = p; return { ok: true, summary: "바꿈", branch: "cy/b", worktree: "/w/cy-b", files: 1, log: [] }; },
   });
   const { chatId: id, threadId } = s.agent.chat("앱에 다크모드 넣고 dev 에 반영해줘, 프로젝트 보여줘") as { chatId: string; threadId: string };
   await s.agent.chatIdle();
@@ -131,9 +133,13 @@ test("채팅: 패널 열기 + 코드 작업은 승인 없이 바로 수정 run(P
   assert.equal(s.store.proposal(seen.id)!.status, "done");
   const post = s.posts.find((p) => p.text === "요청 작업: 다크모드");
   assert.equal(post.blocks.some((b: any) => b.type === "actions"), false);
-  assert.match(JSON.stringify(post.blocks), /바로 시작해요 \(PR 대상 `develop`\)/);
+  assert.match(JSON.stringify(post.blocks), /바로 시작해요 \(기준 `develop`\)/);
   assert.equal(s.bubbles.some((b) => b.kind === "proposal" && b.proposalId === seen.id), false); // "할까요?" 말풍선 없음
-  assert.equal(s.store.chatHistory().length, 2);
+  // 사용자 말 + 시작 답 + 로컬 완료 줄(머지 카드·PR 문구 없음)
+  const chat = s.store.chatHistory();
+  assert.equal(chat.length, 3);
+  assert.match(chat.at(-1)!.text, /로컬 변경 완료 — 커밋·푸시·PR 없음/);
+  assert.equal(s.bubbles.some((b) => b.actions === "merge"), false);
 });
 
 test("채팅: 허용 밖 레포 작업은 시작하지 않고 답에 알린다", async () => {

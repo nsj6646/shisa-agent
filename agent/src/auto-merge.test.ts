@@ -217,45 +217,22 @@ test("자동 머지 레포: 말로 넣기 → 그 레포 채팅 머지 요청은
   assert.deepEqual(s.ops, [["add", "acme/speaker"], ["remove", "acme/speaker"]]);
 });
 
-test("수정 run 이 자동 머지 레포에 PR 을 올리면: 검사 끝나길 기다렸다가 ✓ 없이 머지 + 그 대화에 결과(머지 커밋)", async () => {
-  let reads = 0;
+test("수정 run 은 자동 머지 레포여도 PR·머지 카드를 만들지 않는다 — 로컬 완료만", async () => {
   let s!: ReturnType<typeof setup>;
   s = setup({
     autoMerge: ["example-org/cy-agent"],
-    status: () => cyPr(reads++ === 0 ? { checks: { pass: 1, pending: 1, fail: 0, failing: [] }, mergeable: "UNKNOWN" } : {}),
+    status: () => cyPr({}),
     reply: () => ({ reply_md: "작업 시작했어요", proposals: [{ repo: s.root, title: "다크모드", plan: "토글" }] }),
-    runFix: async () => ({ ok: true, summary: "바꿈", prUrl: CY_URL, branch: "cy/dark-1", log: [] }),
+    runFix: async () => ({ ok: true, summary: "바꿈", branch: "cy/dark-1", worktree: "/w/cy-dark-1", files: 1, testsRan: ["npm test"], log: [] }),
   });
   execFileSync("git", ["init", "-q", s.root]);
   const sent = s.agent.chat("다크모드 넣어줘") as { threadId: string };
   await s.agent.chatIdle();
-  await (s.agent as any).queue;
-  await s.agent.autoMergeIdle();
-  assert.deepEqual(s.merged, [CY_URL]);
-  assert.equal(mergeCards(s).length, 0);
   const texts = s.agent.threadMessages(sent.threadId)!.messages.map((m) => m.text);
-  assert.ok(texts.some((t) => /자동 머지 레포라 검사가 끝나면 ✓ 없이 머지할게요/.test(t)));
-  assert.ok(texts.some((t) => /🤖 자동으로 머지했어요 — #300 다크모드 \(머지 커밋 https:\/\/github.com\/example-org\/cy-agent\/commit\/abc1234\)/.test(t)));
-  const p = s.store.db.prepare("SELECT id FROM proposals").get() as any;
-  assert.equal(s.reactions.merge(p.id)!.approved, "auto");
-});
-
-test("수정 run PR: 자동 머지 레포인데 검사 실패면 머지 안 하고 예전 승인 카드(이유 한 줄) · 레포가 목록 밖이면 카드", async () => {
-  let s!: ReturnType<typeof setup>;
-  s = setup({
-    autoMerge: ["example-org/cy-agent"],
-    status: () => cyPr({ checks: { pass: 1, pending: 0, fail: 1, failing: ["test"] } }),
-    reply: () => ({ reply_md: "작업 시작했어요", proposals: [{ repo: s.root, title: "다크모드", plan: "토글" }] }),
-    runFix: async () => ({ ok: true, summary: "바꿈", prUrl: CY_URL, branch: "cy/dark-1", log: [] }),
-  });
-  execFileSync("git", ["init", "-q", s.root]);
-  const sent = s.agent.chat("다크모드 넣어줘") as { threadId: string };
-  await s.agent.chatIdle();
-  await (s.agent as any).queue;
-  await s.agent.autoMergeIdle();
+  assert.ok(texts.some((t) => /로컬 변경 완료 — 커밋·푸시·PR 없음/.test(t)));
+  assert.equal(mergeCards(s).length, 0);
   assert.deepEqual(s.merged, []);
-  assert.equal(mergeCards(s).length, 1);
-  assert.ok(s.agent.threadMessages(sent.threadId)!.messages.some((m) => /자동 머지는 못 했어요\(검사 1개 실패\(test\)/.test(m.text)));
+  assert.equal(s.reactions.merge("cy-dark-1"), undefined);
 });
 
 // ── 채팅의 git commit/push ──

@@ -70,17 +70,20 @@ test("수정 run: 같은 레포 둘 + 다른 레포 하나가 동시에 돈다 �
   let inside = 0;
   const sdk = fakeSdk(async (o) => { inside++; await gate; writeFileSync(join(o.cwd, "x.txt"), o.cwd); });
   const runs = [proposal(a, "p1aaaaaaaa"), proposal(a, "p2bbbbbbbb"), proposal(b, "p3cccccccc")].map((p) =>
-    runFix(cfgFor(root), p, () => {}, { query: sdk, runs: reg, worktreesDir: join(root, "wts"), gh: async () => "https://github.com/x/y/pull/1" }));
+    runFix(cfgFor(root), p, () => {}, { query: sdk, runs: reg, worktreesDir: join(root, "wts") }));
   await until(() => inside === 3); // 셋 다 모델 단계에 들어와 있다(앞 것이 끝나길 기다리지 않음)
   release();
   const rs = await Promise.all(runs);
   assert.ok(rs.every((r) => r.ok), JSON.stringify(rs.map((r) => r.summary)));
   assert.equal(gitMutex.peak.get(gitKey(a)), 1);
   assert.equal(gitMutex.peak.get(gitKey(b)), 1);
-  assert.equal(git(join(root, "a.git"), "branch", "--list", "cy/*").split("\n").length, 2);
+  // 셋 다 커밋·푸시 없이 각자 워크트리에 변경을 남긴다(원격 브랜치는 없다)
+  assert.ok(rs.every((r) => r.worktree && existsSync(join(r.worktree, "x.txt"))), JSON.stringify(rs.map((r) => r.worktree)));
+  assert.equal(git(join(root, "a.git"), "branch", "--list", "cy/*"), "");
+  assert.equal(git(a, "branch", "--list", "cy/*").split("\n").filter(Boolean).length, 2);
 });
 
-test("워크트리 격리: 한 세션이 서브에이전트 셋에 워크트리를 하나씩 동시에 판다 — 바뀐 건 커밋해 남기고, 안 바뀐 건 지운다", async () => {
+test("워크트리 격리: 한 세션이 서브에이전트 셋에 워크트리를 하나씩 동시에 판다 — 바뀐 건 미커밋으로 남기고, 안 바뀐 건 지운다", async () => {
   const root = mkdtempSync(join(tmpdir(), "cy-iso-"));
   const app = repoIn(root, "app");
   const logs: any[] = [];
@@ -96,12 +99,13 @@ test("워크트리 격리: 한 세션이 서브에이전트 셋에 워크트리�
   writeFileSync(join(wts[0].wt, "a.txt"), "a\n");
   writeFileSync(join(wts[1].wt, "b.txt"), "b\n");
   const [n1, n2, n3] = await Promise.all(["t1", "t2", "t3"].map((id) => iso.finish(id)));
-  assert.match(n1!, /커밋/);
-  assert.match(n2!, /cherry-pick -n/);
+  assert.match(n1!, /미커밋 변경/);
+  assert.match(n2!, /git -C/);
   assert.match(n3!, /바뀐 파일이 없어 지웠어요/);
   assert.ok(existsSync(wts[0].wt) && existsSync(wts[1].wt));
   assert.ok(!existsSync(wts[2].wt));
-  assert.equal(git(app, "log", "-1", "--format=%an", wts[0].branch), "Bot");
+  assert.equal(git(app, "log", "-1", "--format=%s"), "init"); // 서브에이전트 워크트리는 커밋하지 않는다
+  assert.equal(git(wts[0].wt, "status", "--porcelain"), "?? a.txt");
   assert.equal(git(app, "branch", "--list", wts[2].branch), "");
   assert.ok(logs.some((e) => e.worktree === wts[0].wt && e.parent === "t1"));
   assert.equal(iso.worktrees.length, 2);
@@ -140,7 +144,7 @@ test("쓰기 잠금은 체크아웃마다: 같은 레포라도 워크트리가 �
   await iso.closeAll();
 });
 
-test("수정 run 안의 서브에이전트: isolation worktree 로 둘을 동시에 — PreToolUse 가 워크트리를 파고 PostToolUse 가 커밋해 남기거나 지운다", async () => {
+test("수정 run 안의 서브에이전트: isolation worktree 로 둘을 동시에 — PreToolUse 가 워크트리를 파고 PostToolUse 가 변경을 남기거나 지운다", async () => {
   const root = mkdtempSync(join(tmpdir(), "cy-fixiso-"));
   const app = repoIn(root, "app");
   const reg = new RunRegistry(new DatabaseSync(":memory:"));
@@ -160,9 +164,9 @@ test("수정 run 안의 서브에이전트: isolation worktree 로 둘을 동시
     }
     writeFileSync(join(o.cwd, "main.txt"), "m\n");
   });
-  const r = await runFix(cfgFor(root), proposal(app, "pfixiso01"), () => {}, { query: sdk, runs: reg, worktreesDir: join(root, "wts"), gh: async () => "https://github.com/x/y/pull/2" });
+  const r = await runFix(cfgFor(root), proposal(app, "pfixiso01"), () => {}, { query: sdk, runs: reg, worktreesDir: join(root, "wts") });
   assert.equal(r.ok, true, r.summary);
-  assert.match(notes[0], /커밋 \w+/);
+  assert.match(notes[0], /미커밋 변경/);
   assert.match(notes[1], /바뀐 파일이 없어 지웠어요/);
 });
 
@@ -207,7 +211,7 @@ test("채팅: 한 답의 제안 셋 → 수정 run 셋이 전부 바로 동시�
   assert.match(lines[at + 1], /`cy\/change-[0-9a-f]{6}`/);
   release();
   await agent.fixIdle();
-  // 격리 백그라운드 에이전트: 워크트리를 파서 그 안에서 돈다, 끝나면 커밋해 남긴 브랜치를 결과에
+  // 격리 백그라운드 에이전트: 워크트리를 파서 그 안에서 돈다, 끝나면 미커밋 변경과 가져오는 법을 결과에
   const t = agent.chat("에이전트로 따로 고쳐") as { threadId: string };
   await agent.chatIdle();
   await until(() => bgJobs.length === 1);
@@ -221,7 +225,7 @@ test("채팅: 한 답의 제안 셋 → 수정 run 셋이 전부 바로 동시�
   await agent.bgAgents.idle();
   const last = agent["store"].threadMessages(t.threadId).at(-1)!.text;
   assert.match(last, /고쳤어요/);
-  assert.match(last, new RegExp(`브랜치 ${job.worktree!.branch.replace(/[/.-]/g, "\\$&")} 에 커밋`));
+  assert.match(last, new RegExp(`브랜치 ${job.worktree!.branch.replace(/[/.-]/g, "\\$&")} 에 미커밋 변경`));
 });
 
 test("커밋 전 테스트: 한 번 실패하면 다시 돌리고(불안정), 두 번 실패면 출력 끝 60줄을 세션 기록·실패 글에 — 사용자 셸 환경에서", async () => {
@@ -233,16 +237,19 @@ test("커밋 전 테스트: 한 번 실패하면 다시 돌리고(불안정), �
   // 1) 첫 번째만 실패 → 다시 돌려 통과 → 커밋
   let calls = 0;
   const flaky = { label: "unit", cmd: ["npm", "test"], dir: "." };
-  const r1 = await runFix(cfgFor(root), proposal(app, "pflaky001"), () => {}, { query: sdk, runs: reg, worktreesDir: join(root, "wts"), gh: async () => "https://github.com/x/y/pull/3",
+  const r1 = await runFix(cfgFor(root), proposal(app, "pflaky001"), () => {}, { query: sdk, runs: reg, worktreesDir: join(root, "wts"),
     testCommands: [flaky], runTest: async () => { if (++calls === 1) throw fail(1); return ""; } });
   assert.equal(r1.ok, true, r1.summary);
   assert.equal(calls, 2);
+  assert.equal(r1.summary, "s");
+  assert.ok(r1.worktree && existsSync(join(r1.worktree, "x.txt"))); // 커밋 없이 워크트리에 남는다
   assert.ok(reg.getRun(r1.runId!)!.events.some((e) => e.type === "system" && /다시 돌림\(불안정한 실패일 수 있어요\)/.test(e.text ?? "")));
-  // 2) 두 번 다 실패 → 실패, 출력 끝이 기록·요약에
+  // 2) 두 번 다 실패 → 실패, 출력 끝이 기록·요약에 (변경은 지우지 않는다)
   const r2 = await runFix(cfgFor(root), proposal(app, "pflaky002"), () => {}, { query: sdk, runs: reg, worktreesDir: join(root, "wts"),
     testCommands: [flaky], runTest: async () => { throw fail(2); } });
   assert.equal(r2.ok, false);
   assert.match(r2.summary, /두 번 돌려도 실패/);
+  assert.ok(r2.worktree && existsSync(join(r2.worktree, "x.txt")));
   assert.match(r2.summary, /line 2-99/);
   assert.match(r2.summary, /failed to exit gracefully/);
   const ev = reg.getRun(r2.runId!)!.events.find((e) => e.type === "system" && /❌ 테스트 실패\(unit\)/.test(e.text ?? ""))!;

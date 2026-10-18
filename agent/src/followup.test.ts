@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -77,7 +77,7 @@ function ports(o: ReturnType<typeof setupRepo>, reg: RunRegistry, store: Store, 
   return { f, jobs, bubbles, chats, proposed };
 }
 
-test("끝난 수정 run 이어서 하기 → 같은 워크트리 경로·resume(fork), 같은 브랜치에 커밋·푸시, 부모·자식 연결", async () => {
+test("끝난 수정 run 이어서 하기 → 보존된 같은 워크트리·resume(fork), 커밋·푸시 없이 변경이 남는다", async () => {
   const o = setupRepo();
   const reg = new RunRegistry(new DatabaseSync(":memory:"));
   const store = new Store(":memory:");
@@ -89,10 +89,11 @@ test("끝난 수정 run 이어서 하기 → 같은 워크트리 경로·resume(
   assert.equal(parent.branch, first.branch);
   assert.equal(parent.repo, git(o.app, "rev-parse", "--show-toplevel"));
   assert.equal(parent.sdkSessionId, "sess-parent");
-  const before = git(o.origin, "rev-parse", first.branch!);
+  assert.ok(first.worktree && existsSync(first.worktree));
+  assert.equal(git(o.origin, "branch", "--list", "cy/*"), ""); // 푸시 안 함
 
   const seen: string[] = [];
-  const { f, jobs } = ports(o, reg, store, { fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async (sid, cwd) => { seen.push(`${sid}@${cwd}`); return true; }, prState: () => undefined } });
+  const { f, jobs } = ports(o, reg, store, { fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async (sid, cwd) => { seen.push(`${sid}@${cwd}`); return true; } } });
   const res = f.continueRun(parent.id, "README에 한 줄 더 추가해");
   assert.equal(res.ok, true);
   assert.equal((res as any).mode, "fix");
@@ -108,7 +109,7 @@ test("끝난 수정 run 이어서 하기 → 같은 워크트리 경로·resume(
   const child = reg.getRun(childId)!;
   assert.equal(child.run.status, "done", child.run.error ?? "");
   assert.equal(child.run.branch, first.branch);
-  assert.equal(child.run.cwd, parent.cwd); // resume 은 같은 경로여야 세션을 찾는다
+  assert.equal(child.run.cwd, parent.cwd); // 보존된 워크트리·resume 은 같은 경로여야 한다
   assert.deepEqual(seen, [`sess-parent@${parent.cwd}`]);
   const opts = sdk.calls[1];
   assert.equal(opts.resume, "sess-parent");
@@ -120,39 +121,42 @@ test("끝난 수정 run 이어서 하기 → 같은 워크트리 경로·resume(
   assert.equal(child.run.sdkSessionId, "sess-child");
   assert.ok(child.events.some((e) => e.type === "user" && e.injected && e.text === "README에 한 줄 더 추가해"));
   assert.ok(child.events.some((e) => e.type === "system" && /resume/.test(e.text ?? "")));
-  // 같은 브랜치에 이어서(앞선 커밋 위에) 푸시, 작성자 고정
-  assert.equal(git(o.origin, "rev-parse", `${first.branch}~1`), before);
-  assert.match(git(o.origin, "show", `${first.branch}:README.md`), /한 줄 더/);
-  assert.match(git(o.origin, "show", `${first.branch}:hello.txt`), /hi/);
-  assert.match(git(o.origin, "log", "-1", "--format=%an|%B", first.branch!), /^Bot\|docs: readme[\s\S]*continue of run/);
-  assert.equal(existsSync(parent.cwd!), false); // 워크트리 정리
+  // 두 변경이 모두 앞선 워크트리에 미커밋으로 남고, 원격·원래 체크아웃은 건드리지 않았다
+  assert.equal(readFileSync(join(parent.cwd!, "hello.txt"), "utf8"), "hi\n");
+  assert.match(readFileSync(join(parent.cwd!, "README.md"), "utf8"), /한 줄 더/);
+  assert.equal(git(parent.cwd!, "rev-list", "--count", "HEAD"), "1");
+  assert.equal(git(o.origin, "branch", "--list", "cy/*"), "");
+  assert.equal(git(o.app, "rev-list", "--count", "HEAD"), "1");
 });
 
-test("세션을 다시 열 수 없으면 요약을 넣고 새 세션 · 원격 브랜치가 없으면 기본 브랜치에서 새 브랜치(기록에 알림)", async () => {
+test("앞선 워크트리·로컬 브랜치가 사라졌으면 되살릴 수 없다고 알리고 새 브랜치로 · 세션은 요약으로", async () => {
   const o = setupRepo();
   const reg = new RunRegistry(new DatabaseSync(":memory:"));
   const store = new Store(":memory:");
   const sdk = fakeSdk((t, cwd) => { if (t.startsWith("다음 변경을")) writeFileSync(join(cwd, "hello.txt"), "hi\n"); else appendFileSync(join(cwd, "README.md"), "두 번째\n"); });
   const { r: first, run: parent } = await parentFix(o, reg, store, { query: sdk.fn });
-  git(o.origin, "branch", "-D", first.branch!); // 브랜치가 사라졌다(머지 후 삭제 등)
-  const { f, jobs } = ports(o, reg, store, { fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async () => false, prState: () => undefined } });
+  // 워크트리와 로컬 브랜치가 남아 있지 않다 → 새로 시작하고, 앞선 변경은 되살릴 수 없다고 알린다
+  rmSync(first.worktree!, { recursive: true, force: true });
+  git(o.app, "worktree", "prune");
+  git(o.app, "branch", "-D", first.branch!);
+  const { f, jobs } = ports(o, reg, store, { fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async () => false } });
   const res = f.continueRun(parent.id, "README 고쳐") as any;
   await Promise.all(jobs);
   const child = reg.getRun(res.runId)!;
   assert.equal(child.run.status, "done", child.run.error ?? "");
   assert.notEqual(child.run.branch, first.branch);
   assert.match(child.run.branch!, /^cy\/add-hello-/);
-  assert.ok(child.events.some((e) => e.type === "system" && /원격에 없어서 main 에서 새 브랜치/.test(e.text ?? "")));
+  assert.ok(child.events.some((e) => e.type === "system" && /앞선 워크트리·브랜치/.test(e.text ?? "")));
   assert.ok(child.events.some((e) => e.type === "system" && /요약/.test(e.text ?? "")));
   assert.equal(sdk.calls[1].resume, undefined);
   assert.match(sdk.prompts[1], /앞선 작업 기록\(요약\)/);
   assert.match(sdk.prompts[1], /제목: add hello/);
-  assert.match(sdk.prompts[1], /기본 브랜치\(main\)에서 새 브랜치로/);
-  assert.match(git(o.origin, "show", `${child.run.branch}:README.md`), /두 번째/);
-  assert.equal(existsSync(join(o.origin, "refs/heads", first.branch!)), false);
+  assert.match(sdk.prompts[1], /main 에서 새 브랜치로/);
+  assert.match(readFileSync(join(child.run.cwd!, "README.md"), "utf8"), /두 번째/); // 새 워크트리에 남는다
+  assert.equal(git(o.origin, "branch", "--list", child.run.branch!), ""); // 푸시 없음
 });
 
-test("이어서 하기는 원래 제안의 PR 대상 브랜치(base)를 이어받는다 — 새 브랜치도 develop 에서, PR 도 --base develop", async () => {
+test("이어서 하기는 원래 제안의 작업 기준(base)을 이어받는다 — 새 브랜치도 develop 에서, PR 은 만들지 않는다", async () => {
   const o = setupRepo();
   git(o.app, "checkout", "-q", "-b", "develop");
   writeFileSync(join(o.app, "DEV.md"), "develop only\n");
@@ -162,38 +166,23 @@ test("이어서 하기는 원래 제안의 PR 대상 브랜치(base)를 이어�
   git(o.app, "checkout", "-q", "main");
   const reg = new RunRegistry(new DatabaseSync(":memory:"));
   const store = new Store(":memory:");
-  const ghCalls: string[][] = [];
-  const gh = (a: string[]) => { ghCalls.push(a); return ""; };
   const sdk = fakeSdk((t, cwd) => { if (t.startsWith("다음 변경을")) writeFileSync(join(cwd, "hello.txt"), "hi\n"); else appendFileSync(join(cwd, "README.md"), "x\n"); });
   store.addProposal({ id: "prop-follow-dev", repo: o.app, title: "add hello", plan: "hello.txt 추가", base: "develop" });
-  const first = await runFix(cfgFor(o.root), store.proposal("prop-follow-dev")!, () => {}, { runs: reg, worktreesDir: o.wts, query: sdk.fn, gh });
+  const first = await runFix(cfgFor(o.root), store.proposal("prop-follow-dev")!, () => {}, { runs: reg, worktreesDir: o.wts, query: sdk.fn });
   assert.equal(first.ok, true, first.summary);
-  assert.equal(ghCalls[0][3], "develop");
-  git(o.origin, "branch", "-D", first.branch!); // 브랜치가 사라졌다 → 새 브랜치로
+  // 앞선 워크트리·브랜치를 지워 새로 시작하게 만든다 → 기준 develop 유지
+  rmSync(first.worktree!, { recursive: true, force: true });
+  git(o.app, "worktree", "prune");
+  git(o.app, "branch", "-D", first.branch!);
   const parent = reg.listRuns()[0];
-  const { f, jobs } = ports(o, reg, store, { fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async () => false, prState: () => undefined, gh } });
+  const { f, jobs } = ports(o, reg, store, { fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async () => false } });
   const res = f.continueRun(parent.id, "README 고쳐") as any;
   await Promise.all(jobs);
   const child = reg.getRun(res.runId)!;
   assert.equal(child.run.status, "done", child.run.error ?? "");
-  assert.match(git(o.origin, "show", `${child.run.branch}:DEV.md`), /develop only/);
-  assert.equal(ghCalls[1][3], "develop");
-  assert.match(sdk.prompts[1], /PR 대상 브랜치\(develop\)에서 새 브랜치로/);
-});
-
-test("PR 이 머지됐으면 브랜치가 있어도 기본 브랜치에서 새로", async () => {
-  const o = setupRepo();
-  const reg = new RunRegistry(new DatabaseSync(":memory:"));
-  const store = new Store(":memory:");
-  const sdk = fakeSdk((t, cwd) => { if (t.startsWith("다음 변경을")) writeFileSync(join(cwd, "hello.txt"), "hi\n"); else appendFileSync(join(cwd, "README.md"), "x\n"); });
-  const { r: first, run: parent } = await parentFix(o, reg, store, { query: sdk.fn });
-  const { f, jobs } = ports(o, reg, store, { fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async () => true, prState: () => ({ state: "MERGED", url: "https://github.com/x/y/pull/1" }) } });
-  const res = f.continueRun(parent.id, "이어서") as any;
-  await Promise.all(jobs);
-  const child = reg.getRun(res.runId)!;
-  assert.equal(child.run.status, "done", child.run.error ?? "");
-  assert.notEqual(child.run.branch, first.branch);
-  assert.ok(child.events.some((e) => /머지돼서/.test(e.text ?? "")));
+  assert.match(readFileSync(join(child.run.cwd!, "DEV.md"), "utf8"), /develop only/);
+  assert.match(sdk.prompts[1], /develop 에서 새 브랜치로/);
+  assert.equal(git(o.origin, "branch", "--list", child.run.branch!), ""); // PR 은 만들지 않는다
 });
 
 test("이어서 하기에 고른 모델: 수정 run 은 그 모델로 새 세션(run 기록에도), 대화는 채팅으로 모델을 넘긴다", async () => {
@@ -206,7 +195,7 @@ test("이어서 하기에 고른 모델: 수정 run 은 그 모델로 새 세션
   assert.equal(sdk.calls[0].model, cfg.models.code);
   const models: (string | undefined)[] = [];
   const { f, jobs } = ports(o, reg, store, {
-    fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async () => true, prState: () => undefined },
+    fixDeps: { query: sdk.fn, worktreesDir: o.wts, sessionExists: async () => true },
     chat: (_t, m) => { models.push(m); return "chat-m"; },
   });
   const res = f.continueRun(parent.id, "가볍게 하나 더", cfg.models.general) as any;

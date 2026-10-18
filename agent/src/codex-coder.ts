@@ -280,7 +280,7 @@ export function createCodexQuery({ prompt, options = {} }: { prompt: string | As
       write({ method: 'initialized', params: {} });
       const instructions = typeof options.systemPrompt === 'string' ? options.systemPrompt : options.systemPrompt?.append ?? '';
       const started = await rpc('thread/start', { cwd, model: model || null, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write', ephemeral: true,
-        developerInstructions: `${instructions}\n파일 수정과 테스트까지만 한다. git commit/push/merge, PR 생성은 시사가 직접 한다. ${ESCALATION_NOTE}`,
+        developerInstructions: `${instructions}\n파일 수정과 테스트까지만 한다. git commit/push/merge 와 PR 생성은 하지 않는다 — 변경은 워크트리에 미커밋으로 남긴다. ${ESCALATION_NOTE}`,
         config: codexThreadConfig(cwd) });
       if (!sandboxIsSafe(started?.sandbox, cwd)) throw new Error(CODEX_SANDBOX_UNSURE);
       threadId = started.thread.id;

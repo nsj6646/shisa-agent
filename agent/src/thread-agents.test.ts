@@ -135,7 +135,7 @@ test("sessionLast: 최근 줄(새것 먼저)에서 첫 보일 줄 — 도구는 
     { seq: 2, at: at(1), type: "tool_use", name: "Bash", input: "npm test\n  --silent" },
     { seq: 1, at: at(0), type: "assistant", text: "옛 글" },
   ]), "Bash(npm test --silent)");
-  assert.equal(sessionLast([{ seq: 1, at: at(0), type: "system", text: "🚀 cy/x 푸시 완료" }]), "🚀 cy/x 푸시 완료");
+  assert.equal(sessionLast([{ seq: 1, at: at(0), type: "system", text: "📁 변경 1개 · 테스트 통과: npm test" }]), "📁 변경 1개 · 테스트 통과: npm test");
   assert.ok(sessionLast([{ seq: 1, at: at(0), type: "assistant", text: "가".repeat(400) }]).length <= 140);
 });
 
@@ -169,11 +169,11 @@ test("sessionsForThread: 그 대화의 수정 run 만(이어서 한 것도) · �
   assert.deepEqual(list.map((s) => [s.runId, s.title, s.repo, s.branch, s.status, s.last, s.askedAt]), [
     [fix.id, "다음 PR(과소분리 나누기)", "cy-agent", "cy/split-1", "running", "Agent(조사)", at(-30)],
   ]);
-  fix.log({ type: "system", text: "🚀 cy/split-1 푸시 완료" });
+  fix.log({ type: "system", text: "📁 변경 1개 · 커밋·푸시 없이 워크트리에 남겨 뒀어요" });
   fix.end("done");
   list = sessionsForThread(reg, "th1", asked);
   assert.equal(list[0].status, "done");
-  assert.equal(list[0].last, "🚀 cy/split-1 푸시 완료"); // 끝남 status 줄은 마지막 줄로 안 씀
+  assert.equal(list[0].last, "📁 변경 1개 · 커밋·푸시 없이 워크트리에 남겨 뒀어요"); // 끝남 status 줄은 마지막 줄로 안 씀
   assert.ok(list[0].endedAt);
   // 이어서 한 run: 원래 화면을 물려받아 같은 대화, continued
   const cont = reg.startRun({ kind: "fix", title: "다음 PR(과소분리 나누기) · 이어서", parentId: fix.id, ref: "p1" });

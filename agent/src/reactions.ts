@@ -95,7 +95,7 @@ export function fixMilestone(step: string, seen: Set<string>): string | null {
   if (/^🌿/.test(step)) { key = "worktree"; text = phrase("fix_worktree"); }
   else if (/^(Edit|Write|MultiEdit|NotebookEdit)\b/.test(step)) { key = "edit"; text = phrase("fix_edit"); }
   else if (/^🧪/.test(step)) { key = "test"; text = phrase("fix_test"); }
-  else if (/^🚀/.test(step)) { key = "push"; text = phrase(seen.has("test") ? "fix_push_tested" : "fix_push"); }
+  else if (/^📁/.test(step)) { key = "kept"; text = phrase(seen.has("test") ? "fix_push_tested" : "fix_push"); }
   if (!key || seen.has(key)) return null;
   seen.add(key);
   return text;

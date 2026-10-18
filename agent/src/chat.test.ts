@@ -311,7 +311,7 @@ test("chat: 코드 작업 스키마에 PR 대상 브랜치(base), 프롬프트�
   assert.match(CHAT_SYSTEM, /도구 호출이 실제로 일어났을 때만/);
   assert.match(CHAT_SYSTEM, /서브에이전트\(Agent 도구\)는 이 대화에서 \*\*백그라운드로 따로\*\* 돈다/);
   assert.match(CHAT_SYSTEM, /기다리거나 짐작해서 말하지 말고/);
-  assert.match(CHAT_SYSTEM, /긴 코드 작업\(커밋·PR\)은 proposals\(수정 작업\)로/);
+  assert.match(CHAT_SYSTEM, /긴 코드 작업은 proposals\(수정 작업\)로 — PR 은 만들지 않는다/);
 });
 
 test("chat: 코드 작업을 못 올리면(propose 가 undefined) 답에 알린다", async () => {

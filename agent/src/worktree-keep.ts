@@ -2,7 +2,7 @@
 // 남기면 run 기록에 system 줄(worktree = 그 경로)을 남겨 세션 창이 경로를 보여 준다
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import type { RunHandle } from "./runs.ts";
+import type { RunEventInput } from "./runs.ts";
 
 const git = (cwd: string, args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60e3 }).trim();
 
@@ -19,7 +19,7 @@ export function worktreeLeftovers(wt: string): { dirty: number; unpushed: number
 }
 
 // 지울지 정한다: 푸시까지 끝났으면 지우고, 아니면 남은 게 있을 때 남긴다. 남겼으면 true(그땐 로컬 브랜치도 지우면 안 된다)
-export function cleanupWorktree(repo: string, wt: string, o: { run?: Pick<RunHandle, "log">; shipped: boolean }): boolean {
+export function cleanupWorktree(repo: string, wt: string, o: { run?: { log(ev: RunEventInput): unknown }; shipped: boolean }): boolean {
   if (!wt) return false;
   const left = o.shipped ? null : worktreeLeftovers(wt);
   if (left) {

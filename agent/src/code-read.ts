@@ -157,6 +157,6 @@ export function codeBlock(roots: string[], repo?: RelatedRepo, checkout: string 
     ...(checkout ? [checkout] : []),
     `- Read·Glob·Grep 으로 ${roots.join(", ")} 안의 레포 파일은 바로 읽는다(절대 경로로). 그 밖 경로는 승인 카드가 뜬다. .env·자격 증명 파일은 못 읽는다.`,
     "- 코드·레포 질문이면 짐작하지 말고 파일을 읽고 답한다. 필요한 만큼만(큰 파일은 Grep 으로 찾고 부분만 Read).",
-    "- Bash·Edit·Write 도 쓸 수 있다(실행 전에 승인 카드 — 읽기만 하는 셸 명령(ls·cat·git log 등)은 바로 돈다). 작은 수정·명령은 직접, 커밋·PR까지 가는 변경은 proposals 에 하나 넣는다 — 바로 작업이 시작돼 PR 까지 올라가고 머지만 사용자가 승인한다(레포는 위 관련 레포). git commit·push 는 막혀 있다.",
+    "- Bash·Edit·Write 도 쓸 수 있다(실행 전에 승인 카드 — 읽기만 하는 셸 명령(ls·cat·git log 등)은 바로 돈다). 작은 수정·명령은 직접, 여러 파일을 고치는 변경은 proposals 에 하나 넣는다 — 바로 작업이 시작돼 수정·테스트 뒤 변경을 워크트리에 남기고 끝난다(레포는 위 관련 레포). git commit·push 와 PR 생성은 막혀 있다.",
   ].join("\n");
 }

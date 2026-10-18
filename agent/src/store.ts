@@ -55,7 +55,7 @@ export type Proposal = {
   id: string; repo: string; title: string; plan: string; status: ProposalStatus;
   slackTs?: string; slackChannel?: string; result?: string; created: string;
   threadId?: string; // 채팅에서 나온 제안이면 그 대화(세션 창 "원래 화면 열기")
-  base?: string; // PR 대상 브랜치(예: develop). 없으면 origin/HEAD(기본 브랜치)
+  base?: string; // 작업 기준 브랜치(예: develop). 없으면 origin/HEAD, 원격이 없으면 지금 체크아웃
 };
 export type Briefing = { at: string; bubble: string; replyMd: string };
 // todoId·todoTitle: 사용자가 특정 할 일을 집어 들고 한 말(패널 '이 할 일로 채팅')

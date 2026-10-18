@@ -136,10 +136,10 @@ test("진행 보고: 간격 안의 단계는 묶는다", () => {
   assert.deepEqual(s.bubbles.map((b) => b.text), ["시작", "끝"]);
 });
 
-test("수정 이정표: 워크트리 → 수정 중 → 테스트 → 푸시, 중복 없이", () => {
+test("수정 이정표: 워크트리 → 수정 중 → 테스트 → 변경을 남김, 중복 없이", () => {
   const seen = new Set<string>();
-  const out = ["🌿 워크트리 cy/x (기준 main)", "Read a.ts", "Edit a.ts", "Edit b.ts", "$ npm test", "🧪 npm test", "🚀 푸시 완료"].map((s) => fixMilestone(s, seen));
-  assert.deepEqual(out.filter(Boolean), ["워크트리 만드는 중이에요 🌿", "고치는 중이에요… ✏️", "테스트 돌리는 중이에~요 🧪", "테스트 통과했어요! ✅ 푸시했어요 (뿌듯한 시사)"]);
+  const out = ["🌿 워크트리 cy/x (기준 main)", "Read a.ts", "Edit a.ts", "Edit b.ts", "$ npm test", "🧪 npm test", "📁 변경 1개 · 테스트 통과: npm test"].map((s) => fixMilestone(s, seen));
+  assert.deepEqual(out.filter(Boolean), ["워크트리 만드는 중이에요 🌿", "고치는 중이에요… ✏️", "테스트 돌리는 중이에~요 🧪", "테스트 통과했어요! ✅ 변경은 워크트리에 남겨 뒀어요"]);
   assert.equal(testsFromLog(["🧪 npm test", "x"]), "npm test 통과");
   assert.equal(testsFromLog([]), undefined);
 });
@@ -306,7 +306,7 @@ function agentSetup() {
   };
   const agent = new Agent(cfg as any, store, bus, slack, {
     think: async () => thought as any,
-    runFix: async (_c, _p, step) => { step("🌿 워크트리 cy/b"); step("Edit a.ts"); step("🧪 npm test"); step("🚀 푸시 완료"); return { ok: true, summary: "바꿈", prUrl: "https://github.com/x/y/pull/1", branch: "cy/b", log: ["🧪 npm test"], headOid: "d".repeat(40) }; },
+    runFix: async (_c, _p, step) => { step("🌿 워크트리 cy/b"); step("Edit a.ts"); step("🧪 npm test"); step("📁 변경 1개 · 테스트 통과: npm test"); return { ok: true, summary: "바꿈", branch: "cy/b", worktree: "/w/cy-b", files: 1, testsRan: ["npm test"], log: ["🧪 npm test"] }; },
     mergePr: (url, sha) => { merged.push(url); pins.push(sha); return "merged"; },
     git: async () => [],
   });
@@ -315,7 +315,7 @@ function agentSetup() {
   return { agent, store, bubbles, posts, updates, merged, pins, r };
 }
 
-test("core: 브리핑 새 할 일 → to_do_new, 실행 이정표 → 머지 질문, 오버레이 ✓ 뒤 Slack ✓ 는 이미 머지", async () => {
+test("core: 브리핑 새 할 일 → to_do_new, 실행 이정표 → 로컬 완료(PR·머지 카드 없음)", async () => {
   const s = agentSetup();
   await s.agent.runBriefing();
   const nb = s.bubbles.find((b) => b.image === "to_do_new");
@@ -325,31 +325,9 @@ test("core: 브리핑 새 할 일 → to_do_new, 실행 이정표 → 머지 질
   await s.agent.approve(pid);
   await s.agent.fixIdle();
   const prog = s.bubbles.filter((b) => b.id === `progress:fix:${pid}`).map((b) => b.text);
-  assert.deepEqual(prog, ["'버튼 색' 해 볼게요 — 워크트리 만드는 중이에요 🌿", "워크트리 만드는 중이에요 🌿", "고치는 중이에요… ✏️", "테스트 돌리는 중이에~요 🧪", "테스트 통과했어요! ✅ 푸시했어요 (뿌듯한 시사)", "PR 올렸어요 — 🚀 (스이시~사)"]);
-  const ask = s.bubbles.at(-1);
-  assert.deepEqual([ask.id, ask.image, ask.actions], [`merge:${pid}`, "merge", "merge"]);
-  assert.equal(s.r.merge(pid)!.tests, "npm test 통과");
-  const mergeMsgTs = s.posts.findIndex((p) => p.text.startsWith("완료")) + 1;
-  assert.deepEqual(s.r.merge(pid)!.slack, { channel: "D1", ts: String(mergeMsgTs) });
-
-  const r = await s.agent.mergeDecide(pid, "merge");
-  assert.equal(r.ok, true);
-  assert.deepEqual(s.merged, ["https://github.com/x/y/pull/1"]);
-  assert.deepEqual(s.pins, ["d".repeat(40)]); // 수정 run 이 푸시한 커밋으로 고정(그 사이 새 커밋이면 gh 가 거절)
-  assert.equal(s.bubbles.at(-1).image, "merge_complete");
-  const up = s.updates.find((u) => u.ts === String(mergeMsgTs));
-  assert.ok(up && /머지 완료/.test(up.text), "Slack 머지 메시지 정리");
-  assert.equal(await s.agent.merge(pid), "이미 머지했어요"); // Slack 버튼 늦게 눌림
-  assert.equal(s.merged.length, 1);
-});
-
-test("core: ✗ 뒤 Slack 머지 버튼은 오류(머지 안 함)", async () => {
-  const s = agentSetup();
-  await s.agent.runBriefing();
-  const pid = s.bubbles.find((b) => b.kind === "proposal").proposalId;
-  await s.agent.approve(pid);
-  await s.agent.fixIdle();
-  assert.equal((await s.agent.mergeDecide(pid, "decline")).ok, true);
-  await assert.rejects(s.agent.merge(pid), /머지 안 하기로/);
-  assert.deepEqual(s.merged, []);
+  assert.deepEqual(prog, ["'버튼 색' 해 볼게요 — 워크트리 만드는 중이에요 🌿", "워크트리 만드는 중이에요 🌿", "고치는 중이에요… ✏️", "테스트 돌리는 중이에~요 🧪", "테스트 통과했어요! ✅ 변경은 워크트리에 남겨 뒀어요", "변경을 남겨 뒀어요 (cy/b)"]);
+  assert.equal(s.bubbles.some((b) => b.actions === "merge"), false);
+  assert.equal(s.r.merge(pid), undefined);
+  assert.equal(s.merged.length, 0);
+  assert.ok(s.posts.some((p) => p.text.startsWith("완료") && /로컬 변경 완료/.test(JSON.stringify(p.blocks))));
 });
