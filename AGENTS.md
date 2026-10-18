@@ -14,7 +14,7 @@ Single-context: root `GLOSSARY.md` and `docs/adr/`. Read `docs/agents/domain.md`
 
 ### Code map
 
-`docs/agents/architecture.md` — where each daemon/app subsystem lives and the coding-task run flow. Read before exploring or changing code.
+`docs/agents/architecture.md` — map of the daemon/app subsystems and the fix run flow. Read before exploring or changing code.
 
 ## Workflow
 
@@ -22,4 +22,4 @@ Commit and push directly to `main`; never open a pull request. Close the issue w
 
 ## Scratchpad
 
-Detailed explanations and temporary artifacts (HTML, drafts, one-off notes) go to `./scratchpad/`.
+Write detailed explanations and temporary artifacts (HTML, drafts, one-off notes) to `./scratchpad/` — not `docs/` or the repo root.

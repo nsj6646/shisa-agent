@@ -10,10 +10,10 @@ Update it when a subsystem changes job or a flow changes.
 |---|---|
 | `agent/src/` | Daemon. TypeScript run directly by Node (no build step). Owns `~/.cy-agent/cy.db` (`store.ts`) and `~/.cy-agent/config.json`. Serves `127.0.0.1:47823` (`bus.ts`). |
 | `desktop/main.js`, `desktop/preload*.cjs` | Electron main process: windows, IPC handlers, asset protocols; `desktop/src/daemon-host.js` spawns and supervises the bundled daemon. |
-| `desktop/src/` | Main-process pure logic, no DOM. Each file's header comment names its job and callers. |
+| `desktop/src/` | Main-process pure logic. Each file's header comment names its job and callers. |
 | `desktop/renderer/` | DOM/UI only. Talks to the main process over IPC. Entry points: `index.html` overlay, `panel.html`, `session.html`, `settings.html`. |
 | `desktop/scripts/` | Dev harness: `fake-daemon.mjs`, demo scripts, asset and dist scripts. |
-| `docs/contract.md` | HTTP/SSE contract between daemon and app. Update when a route or event changes. |
+| `docs/contract.md` | HTTP/SSE contract between daemon and app. |
 | `assets/characters/` | Character art and `lines.json` (phrase source). `desktop/src/character-lines.js` and `character-clips.js` are generated — never hand-edit. |
 
 ## Daemon (`agent/src`)
@@ -33,7 +33,7 @@ Update it when a subsystem changes job or a flow changes.
 
 Subdirectories: `ingest/` (Slack and Claude Code session ingestion), `kg/` (knowledge-graph extract/merge/crawl/refine), `slack/` (Bolt app, blocks), `fixtures/` (test fixtures).
 
-## Coding-task run flow
+## Fix run (수정 run) flow
 
 The flow most changes touch:
 
@@ -53,10 +53,9 @@ A user-visible change usually reaches more than one place:
 
 ## Verification
 
-- `cd agent && npm test` — typecheck + all tests, in a fresh temp `CY_AGENT_HOME`.
-- `cd desktop && npm test` — all tests.
-- One file: `cd agent && CY_AGENT_HOME=$(mktemp -d) TZ=Asia/Seoul node --test src/<file>.test.ts`; `cd desktop && node --test test/<file>.test.js`.
-- `agent/scripts/test.mjs` (behind `npm test`) is the cross-platform wrapper that sets `TZ` and the temp home.
+- Full runs: `cd agent && npm test`, `cd desktop && npm test`.
+- One file, still isolated: `cd agent && CY_AGENT_HOME=$(mktemp -d) TZ=Asia/Seoul node --test src/<file>.test.ts`; `cd desktop && node --test test/<file>.test.js`.
+- `agent/scripts/test.mjs` (behind `agent` `npm test`) is the cross-platform wrapper that sets `TZ` and a fresh temp `CY_AGENT_HOME` — full runs never touch real `~/.cy-agent` data.
 
 ## Conventions (tooling does not enforce these)
 
