@@ -1,0 +1,42 @@
+#!/bin/sh
+# 스테이징된 파일이 5,000 토큰(20,000바이트)을 넘으면 커밋을 막는다. 설치: git config core.hooksPath .githooks
+set -eu
+MAX_BYTES=20000 # 5,000 tokens × 4 bytes
+
+# 손으로 만들지 않는 파일은 검사 대상이 아니다: lockfile · codegen · minified
+is_ignored() {
+  case "$1" in
+    *package-lock.json|*npm-shrinkwrap.json|*.lock|*pnpm-lock.yaml|\
+    *character-lines.js|*character-clips.js|*.min.js|*.min.css) return 0 ;;
+  esac
+  return 1
+}
+
+too_big=$(git diff --cached --name-only --diff-filter=ACMR | while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  is_ignored "$f" && continue
+  LC_ALL=C grep -qI '' "$f" 2>/dev/null || continue # 바이너리는 바이트/4 가 무의미
+  bytes=$(LC_ALL=C wc -c < "$f" | tr -d ' ')
+  [ "$bytes" -gt "$MAX_BYTES" ] && printf '  %s — %s bytes ≈ %s tokens\n' "$f" "$bytes" "$(( (bytes + 3) / 4 ))"
+  continue
+done)
+
+[ -n "$too_big" ] || exit 0
+
+cat <<MSG
+✖ 5,000 토큰(20,000바이트) 초과 — 커밋을 멈춥니다:
+$too_big
+
+나누는 법 (책임 단위로, 기존 구조를 따라):
+  1. 파일 안에서 서로 다른 일을 하는 덩어리를 찾는다 — 덩어리 하나가 새 파일 하나.
+     예: HTTP 라우팅 / 저장소 로직 / 타입·상수 / 한 기능의 상태 기계.
+  2. 새 파일은 기존 계층을 따른다: agent/src/<이름>.ts 옆에 <이름>.test.ts.
+     desktop/src 는 순수 로직(IO·시계는 주입), DOM 은 desktop/renderer/ 로.
+  3. 공유 타입·상수부터 <이름>.types.ts 같은 곳으로 옮기고 남은 코드가 import 하게 한다.
+  4. 테스트가 크면 describe(주제) 단위로 <이름>-<주제>.test.ts 로 나눈다.
+  5. 옮긴 코드의 에러 처리·검증은 그대로 가져간다. 옮길 때마다 cd agent && npm test 로 확인한다.
+  6. lockfile·생성 파일이라 나눌 수 없으면 이 훅의 is_ignored() 에 추가한다 — 손으로 고치지 않는다.
+
+  급하면: git commit --no-verify
+MSG
+exit 1
