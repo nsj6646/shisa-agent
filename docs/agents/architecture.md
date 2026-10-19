@@ -54,6 +54,7 @@ A user-visible change usually reaches more than one place:
 ## Verification
 
 - Full runs: `cd agent && npm test`, `cd desktop && npm test`.
+- `.githooks/pre-commit` runs both of those on every commit (one-time setup: `git config core.hooksPath .githooks`).
 - One file, still isolated: `cd agent && CY_AGENT_HOME=$(mktemp -d) TZ=Asia/Seoul node --test src/<file>.test.ts`; `cd desktop && node --test test/<file>.test.js`.
 - `agent/scripts/test.mjs` (behind `agent` `npm test`) is the cross-platform wrapper that sets `TZ` and a fresh temp `CY_AGENT_HOME` — full runs never touch real `~/.cy-agent` data.
 

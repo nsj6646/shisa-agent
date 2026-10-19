@@ -24,6 +24,9 @@ if (tsc !== 0) process.exit(tsc);
 // 여러 워크트리에서 npm test 를 동시에 돌릴 때 서로의 config.json·cy.db 를 읽어 가끔 흔들렸다. 끝나면 지운다
 const home = mkdtempSync(join(tmpdir(), "cy-agent-test-home-"));
 const env = { ...process.env, TZ: "Asia/Seoul", CY_AGENT_HOME: home };
+// git 훅(pre-commit)은 GIT_INDEX_FILE=.git/index 같은 걸 물려준다 — 임시 레포를 만드는 테스트가 그걸 물고 깨진다.
+// 어디서 돌려도 같은 환경이 되게 GIT_* 는 지운다(테스트가 필요한 건 각자 -c 나 자체 env 로 싣는다).
+for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
 // node --test 는 glob 을 스스로 푼다(셸 없이 그대로 넘긴다). 뒤에 붙인 인자(npm test -- …)는 node --test 로
 const status = run(["--test", ...process.argv.slice(2), "src/**/*.test.ts"], env);
 try { rmSync(home, { recursive: true, force: true }); } catch { /* 못 지워도 결과는 그대로 */ }
