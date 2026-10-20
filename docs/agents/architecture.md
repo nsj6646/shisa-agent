@@ -54,7 +54,7 @@ A user-visible change usually reaches more than one place:
 ## Verification
 
 - Full runs: `cd agent && npm test`, `cd desktop && npm test`.
-- `.githooks/pre-push` runs both of those on every push (one-time setup: `git config core.hooksPath .githooks`).
+- `.githooks/pre-push` runs both of those on every push (~25s, ~43s cold; one-time setup: `git config core.hooksPath .githooks`). Never pipe `git push` output through `tail`/`head`: buffering hides the hook's streaming progress and a 25s silent wait reads as a hang — let it stream, with a generous tool timeout.
 - `.githooks/pre-commit` blocks staged files over 5,000 tokens (20,000 bytes, tokens = bytes/4) with split instructions; lockfiles and codegen (`character-lines.js`, `character-clips.js`, `*.min.*`) are exempt.
 - One file, still isolated: `cd agent && CY_AGENT_HOME=$(mktemp -d) TZ=Asia/Seoul node --test src/<file>.test.ts`; `cd desktop && node --test test/<file>.test.js`.
 - `agent/scripts/test.mjs` (behind `agent` `npm test`) is the cross-platform wrapper that sets `TZ` and a fresh temp `CY_AGENT_HOME` — full runs never touch real `~/.cy-agent` data.
